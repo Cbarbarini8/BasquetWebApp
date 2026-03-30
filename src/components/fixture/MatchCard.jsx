@@ -1,19 +1,28 @@
+import { useNavigate } from 'react-router-dom';
 import LiveBadge from '../common/LiveBadge';
 import TeamLogo from '../common/TeamLogo';
 
 export default function MatchCard({ match, homeTeam, awayTeam, court }) {
+  const navigate = useNavigate();
   const isLive = match.status === 'live';
   const isFinished = match.status === 'finished';
   const isScheduled = match.status === 'scheduled';
+  const isClickable = isLive || isFinished;
 
   const hasDate = match.scheduledDate != null;
 
+  const handleClick = () => {
+    if (isClickable) navigate(`/match/${match.id}`);
+  };
+
   return (
     <div
+      onClick={handleClick}
       className="rounded-lg p-4 transition-all"
       style={{
         backgroundColor: 'var(--color-bg-card)',
         border: isLive ? '2px solid var(--color-live)' : '1px solid var(--color-border)',
+        cursor: isClickable ? 'pointer' : 'default',
       }}
     >
       <div className="flex items-center justify-between">
@@ -98,6 +107,7 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
               href={court.mapsUrl}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
               className="text-xs inline-flex items-center gap-1 underline"
               style={{ color: 'var(--color-text-muted)' }}
             >
