@@ -23,8 +23,10 @@ export default function Navbar() {
     <nav style={{ backgroundColor: 'var(--color-nav-bg)', color: 'var(--color-nav-text)' }}>
       <div className="max-w-6xl mx-auto px-4">
         <div className="flex items-center justify-between h-14">
-          <Link to="/" className="font-bold text-lg tracking-tight" style={{ color: 'var(--color-nav-text)' }}>
-            Torneo Basquet
+          <Link to="/" className="flex items-center gap-2 font-bold text-lg tracking-tight" style={{ color: 'var(--color-nav-text)' }}>
+            <img src="/logo.png" alt="LCB SF" className="w-8 h-8 rounded-full" />
+            <span className="hidden sm:inline">Liga Comercial de Basquet</span>
+            <span className="sm:hidden">LCB SF</span>
           </Link>
 
           {/* Desktop nav */}

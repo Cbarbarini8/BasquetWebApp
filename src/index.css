@@ -26,6 +26,15 @@
   --color-btn-primary-hover: #1e40af;
   --color-table-header: #1e293b;
   --color-table-row-alt: #f8fafc;
+  --color-podium-gold-bg: #fef9c3;
+  --color-podium-gold-border: #eab308;
+  --color-podium-gold-badge: #ca8a04;
+  --color-podium-silver-bg: #e2e8f0;
+  --color-podium-silver-border: #6b7280;
+  --color-podium-silver-badge: #4b5563;
+  --color-podium-bronze-bg: #fef3e2;
+  --color-podium-bronze-border: #f59e0b;
+  --color-podium-bronze-badge: #b45309;
 }
 
 [data-theme="orange"] {
@@ -49,6 +58,15 @@
   --color-btn-primary-hover: #c2410c;
   --color-table-header: #1c1917;
   --color-table-row-alt: #fafaf9;
+  --color-podium-gold-bg: #fef9c3;
+  --color-podium-gold-border: #eab308;
+  --color-podium-gold-badge: #ca8a04;
+  --color-podium-silver-bg: #e2e8f0;
+  --color-podium-silver-border: #6b7280;
+  --color-podium-silver-badge: #4b5563;
+  --color-podium-bronze-bg: #fef3e2;
+  --color-podium-bronze-border: #f59e0b;
+  --color-podium-bronze-badge: #b45309;
 }
 
 [data-theme="dark"] {
@@ -72,6 +90,15 @@
   --color-btn-primary-hover: #2563eb;
   --color-table-header: #1e293b;
   --color-table-row-alt: #1e293b;
+  --color-podium-gold-bg: #422006;
+  --color-podium-gold-border: #eab308;
+  --color-podium-gold-badge: #eab308;
+  --color-podium-silver-bg: #293548;
+  --color-podium-silver-border: #9ca3af;
+  --color-podium-silver-badge: #9ca3af;
+  --color-podium-bronze-bg: #431407;
+  --color-podium-bronze-border: #f59e0b;
+  --color-podium-bronze-badge: #f59e0b;
 }
 
 body {
@@ -81,6 +108,10 @@ body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   transition: background-color 0.2s, color 0.2s;
   min-width: 320px;
+}
+
+button, select {
+  cursor: pointer;
 }
 
 @keyframes pulse-live {
