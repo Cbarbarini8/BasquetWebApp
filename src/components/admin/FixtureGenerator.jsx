@@ -21,7 +21,6 @@ function generateRoundRobin(teamIds) {
       }
     }
     rounds.push(matches);
-    // Rotate: fix first team, rotate the rest
     const last = teams.pop();
     teams.splice(1, 0, last);
   }
@@ -29,22 +28,19 @@ function generateRoundRobin(teamIds) {
   return rounds;
 }
 
-export default function FixtureGenerator({ teams, matches }) {
+export default function FixtureGenerator({ teams, matches, activeSeason }) {
   const [loading, setLoading] = useState(false);
-  const [startDate, setStartDate] = useState('');
-  const [defaultTime, setDefaultTime] = useState('20:00');
 
   const hasMatches = matches.length > 0;
 
   const handleGenerate = async () => {
+    if (!activeSeason) {
+      alert('Crea una temporada primero desde la pestaña "Temporadas"');
+      return;
+    }
     if (teams.length < 2) {
       alert('Se necesitan al menos 2 equipos');
       return;
-    }
-    if (hasMatches) {
-      if (!window.confirm('Ya hay partidos cargados. Esto generara nuevos partidos sin eliminar los existentes. Continuar?')) {
-        return;
-      }
     }
 
     setLoading(true);
@@ -52,12 +48,7 @@ export default function FixtureGenerator({ teams, matches }) {
       const teamIds = teams.map(t => t.id);
       const rounds = generateRoundRobin(teamIds);
 
-      const baseDate = startDate ? new Date(startDate + 'T00:00:00') : new Date();
-
       for (let i = 0; i < rounds.length; i++) {
-        const roundDate = new Date(baseDate);
-        roundDate.setDate(roundDate.getDate() + i * 7); // una fecha por semana
-
         for (const match of rounds[i]) {
           await addDoc(collection(db, 'matches'), {
             round: i + 1,
@@ -66,9 +57,10 @@ export default function FixtureGenerator({ teams, matches }) {
             homeScore: 0,
             awayScore: 0,
             status: 'scheduled',
-            scheduledDate: roundDate,
-            scheduledTime: defaultTime,
+            scheduledDate: null,
+            scheduledTime: '',
             quarter: 0,
+            seasonId: activeSeason.id,
             createdAt: serverTimestamp(),
             startedAt: null,
             finishedAt: null,
@@ -76,7 +68,7 @@ export default function FixtureGenerator({ teams, matches }) {
         }
       }
 
-      alert(`Fixture generado: ${rounds.length} fechas`);
+      alert(`Fixture generado: ${rounds.length} fechas para "${activeSeason.name}". Asigna dia y horario a cada partido desde la pestaña "Partidos".`);
     } catch (err) {
       console.error('Error generating fixture:', err);
       alert('Error al generar el fixture');
@@ -93,38 +85,37 @@ export default function FixtureGenerator({ teams, matches }) {
       <h3 className="font-semibold mb-3" style={{ color: 'var(--color-text)' }}>
         Generar Fixture Round-Robin
       </h3>
+
+      {activeSeason && (
+        <p className="text-xs mb-2 font-medium" style={{ color: 'var(--color-primary)' }}>
+          Temporada: {activeSeason.name}
+        </p>
+      )}
+
       <p className="text-sm mb-4" style={{ color: 'var(--color-text-secondary)' }}>
-        Genera automaticamente todos contra todos con {teams.length} equipos
-        ({teams.length % 2 === 0 ? teams.length - 1 : teams.length} fechas).
+        Genera automaticamente los cruces (todos contra todos) con {teams.length} equipos
+        {teams.length >= 2 && (
+          <> ({teams.length % 2 === 0 ? teams.length - 1 : teams.length} fechas)</>
+        )}.
+        Los dias y horarios se asignan despues desde la pestaña "Partidos".
       </p>
 
-      <div className="flex flex-wrap gap-3 mb-4">
-        <div>
-          <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Fecha inicio</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={e => setStartDate(e.target.value)}
-            className="px-3 py-2 rounded-md text-sm"
-            style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          />
-        </div>
-        <div>
-          <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Horario default</label>
-          <input
-            type="time"
-            value={defaultTime}
-            onChange={e => setDefaultTime(e.target.value)}
-            className="px-3 py-2 rounded-md text-sm"
-            style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          />
-        </div>
-      </div>
+      {!activeSeason && (
+        <p className="text-xs mb-3 px-3 py-2 rounded-md" style={{ backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-warning)' }}>
+          Crea una temporada primero desde la pestaña "Temporadas".
+        </p>
+      )}
+
+      {hasMatches && (
+        <p className="text-xs mb-3 px-3 py-2 rounded-md" style={{ backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-text-muted)' }}>
+          Ya hay un fixture cargado ({matches.length} partidos) para esta temporada. Esta funcion estara disponible cuando se necesite generar uno nuevo.
+        </p>
+      )}
 
       <button
         onClick={handleGenerate}
-        disabled={loading || teams.length < 2}
-        className="px-4 py-2 rounded-md text-white text-sm font-medium disabled:opacity-50"
+        disabled={loading || teams.length < 2 || hasMatches || !activeSeason}
+        className="px-4 py-2 rounded-md text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         style={{ backgroundColor: 'var(--color-btn-primary)' }}
       >
         {loading ? 'Generando...' : 'Generar Fixture'}

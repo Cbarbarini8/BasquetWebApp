@@ -1,6 +1,10 @@
-import { orderBy } from 'firebase/firestore';
+import { orderBy, where } from 'firebase/firestore';
 import { useCollection } from './useCollection';
 
-export function useMatches() {
-  return useCollection('matches', [orderBy('round'), orderBy('scheduledDate')]);
+export function useMatches(seasonId) {
+  const constraints = seasonId
+    ? [where('seasonId', '==', seasonId), orderBy('round')]
+    : [orderBy('round')];
+
+  return useCollection('matches', constraints);
 }
