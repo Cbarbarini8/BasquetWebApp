@@ -13,7 +13,7 @@ export default function FixturePage() {
   const { data: seasons, loading: seasonsLoading } = useSeasons();
   const activeSeason = useMemo(() => seasons.find(s => s.active), [seasons]);
   const [selectedSeasonId, setSelectedSeasonId] = useState(null);
-  const [selectedRound, setSelectedRound] = useState('1');
+  const [selectedRound, setSelectedRound] = useState('all');
 
   const seasonId = selectedSeasonId || activeSeason?.id;
   const { data: matches, loading: matchesLoading } = useMatches(seasonId);
