@@ -13,6 +13,7 @@ export function computeStandings(matches, teams, config = { pointsForWin: 2, poi
       teamId: team.id,
       teamName: team.name,
       shortName: team.shortName || team.name.substring(0, 3).toUpperCase(),
+      logoUrl: team.logoUrl || null,
       played: 0,
       won: 0,
       lost: 0,
