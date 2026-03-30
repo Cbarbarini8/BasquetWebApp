@@ -6,8 +6,8 @@ import { usePlayers } from './usePlayers';
 import { useTeams } from './useTeams';
 import { computePlayerStats } from '../lib/calculations';
 
-export function usePlayerStats() {
-  const { data: matches, loading: matchesLoading } = useMatches();
+export function usePlayerStats(seasonId) {
+  const { data: matches, loading: matchesLoading } = useMatches(seasonId);
   const { data: players, loading: playersLoading } = usePlayers();
   const { data: teams, loading: teamsLoading } = useTeams();
   const [allEvents, setAllEvents] = useState([]);
@@ -15,6 +15,7 @@ export function usePlayerStats() {
 
   useEffect(() => {
     if (matchesLoading || matches.length === 0) {
+      setAllEvents([]);
       setEventsLoading(false);
       return;
     }

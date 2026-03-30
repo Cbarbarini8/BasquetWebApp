@@ -3,8 +3,8 @@ import { useMatches } from './useMatches';
 import { useTeams } from './useTeams';
 import { computeStandings } from '../lib/calculations';
 
-export function useStandings() {
-  const { data: matches, loading: matchesLoading } = useMatches();
+export function useStandings(seasonId) {
+  const { data: matches, loading: matchesLoading } = useMatches(seasonId);
   const { data: teams, loading: teamsLoading } = useTeams();
 
   const standings = useMemo(() => {

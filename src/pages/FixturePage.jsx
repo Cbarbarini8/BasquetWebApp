@@ -1,14 +1,24 @@
-import { useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { useMatches } from '../hooks/useMatches';
 import { useTeams } from '../hooks/useTeams';
+import { useSeasons } from '../hooks/useSeasons';
+import { useCourts } from '../hooks/useCourts';
 import PageShell from '../components/layout/PageShell';
 import RoundGroup from '../components/fixture/RoundGroup';
+import SeasonSelector from '../components/common/SeasonSelector';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import EmptyState from '../components/common/EmptyState';
 
 export default function FixturePage() {
-  const { data: matches, loading: matchesLoading } = useMatches();
+  const { data: seasons, loading: seasonsLoading } = useSeasons();
+  const activeSeason = useMemo(() => seasons.find(s => s.active), [seasons]);
+  const [selectedSeasonId, setSelectedSeasonId] = useState(null);
+  const [selectedRound, setSelectedRound] = useState('1');
+
+  const seasonId = selectedSeasonId || activeSeason?.id;
+  const { data: matches, loading: matchesLoading } = useMatches(seasonId);
   const { data: teams, loading: teamsLoading } = useTeams();
+  const { data: courts, loading: courtsLoading } = useCourts();
 
   const teamsMap = useMemo(() => {
     const map = {};
@@ -16,7 +26,13 @@ export default function FixturePage() {
     return map;
   }, [teams]);
 
-  const { liveMatches, rounds } = useMemo(() => {
+  const courtsMap = useMemo(() => {
+    const map = {};
+    courts.forEach(c => { map[c.id] = c; });
+    return map;
+  }, [courts]);
+
+  const { liveMatches, rounds, roundNumbers } = useMemo(() => {
     const live = matches.filter(m => m.status === 'live');
     const grouped = {};
     matches.forEach(m => {
@@ -24,17 +40,50 @@ export default function FixturePage() {
       if (!grouped[r]) grouped[r] = [];
       grouped[r].push(m);
     });
-    const roundNumbers = Object.keys(grouped).map(Number).sort((a, b) => a - b);
+    const nums = Object.keys(grouped).map(Number).sort((a, b) => a - b);
     return {
       liveMatches: live,
-      rounds: roundNumbers.map(r => ({ round: r, matches: grouped[r] })),
+      rounds: nums.map(r => ({ round: r, matches: grouped[r] })),
+      roundNumbers: nums,
     };
   }, [matches]);
 
-  if (matchesLoading || teamsLoading) return <PageShell><LoadingSpinner /></PageShell>;
+  const filteredRounds = useMemo(() => {
+    if (selectedRound === 'all') return rounds;
+    const num = parseInt(selectedRound);
+    return rounds.filter(r => r.round === num);
+  }, [rounds, selectedRound]);
+
+  if (seasonsLoading || matchesLoading || teamsLoading || courtsLoading) return <PageShell><LoadingSpinner /></PageShell>;
 
   return (
     <PageShell title="Fixture">
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <SeasonSelector
+          seasons={seasons}
+          selectedId={seasonId || ''}
+          onChange={setSelectedSeasonId}
+        />
+
+        {roundNumbers.length > 0 && (
+          <select
+            value={selectedRound}
+            onChange={e => setSelectedRound(e.target.value)}
+            className="px-3 py-2 rounded-md text-sm font-medium"
+            style={{
+              backgroundColor: 'var(--color-bg-card)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text)',
+            }}
+          >
+            <option value="all">Todas las fechas</option>
+            {roundNumbers.map(r => (
+              <option key={r} value={r}>Fecha {r}</option>
+            ))}
+          </select>
+        )}
+      </div>
+
       {matches.length === 0 ? (
         <EmptyState message="No hay partidos cargados todavia" />
       ) : (
@@ -55,6 +104,7 @@ export default function FixturePage() {
                       round={null}
                       matches={[match]}
                       teamsMap={teamsMap}
+                      courtsMap={courtsMap}
                     />
                   </div>
                 ))}
@@ -62,12 +112,13 @@ export default function FixturePage() {
             </div>
           )}
 
-          {rounds.map(({ round, matches: roundMatches }) => (
+          {filteredRounds.map(({ round, matches: roundMatches }) => (
             <RoundGroup
               key={round}
               round={round}
               matches={roundMatches}
               teamsMap={teamsMap}
+              courtsMap={courtsMap}
             />
           ))}
         </>
