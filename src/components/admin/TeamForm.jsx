@@ -1,59 +1,73 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { uploadToCloudinary } from '../../lib/cloudinary';
 import TeamLogo from '../common/TeamLogo';
-
-function normalizeDriveUrl(url) {
-  if (!url) return '';
-  // https://drive.google.com/file/d/ARCHIVO_ID/view?...
-  const match = url.match(/drive\.google\.com\/file\/d\/([^/]+)/);
-  if (match) {
-    return `https://lh3.googleusercontent.com/d/${match[1]}`;
-  }
-  // https://drive.google.com/open?id=ARCHIVO_ID
-  const match2 = url.match(/drive\.google\.com\/open\?id=([^&]+)/);
-  if (match2) {
-    return `https://lh3.googleusercontent.com/d/${match2[1]}`;
-  }
-  return url;
-}
 
 export default function TeamForm({ teams }) {
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
-  const [logoUrl, setLogoUrl] = useState('');
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState('');
   const [editingId, setEditingId] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
 
   const resetForm = () => {
     setName('');
     setShortName('');
-    setLogoUrl('');
+    setLogoFile(null);
+    setLogoPreview('');
     setEditingId(null);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleFileChange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    setLogoFile(f);
+    setLogoPreview(URL.createObjectURL(f));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!name.trim()) return;
+    setUploading(true);
 
-    const data = {
-      name: name.trim(),
-      shortName: shortName.trim().toUpperCase() || name.trim().substring(0, 3).toUpperCase(),
-      logoUrl: normalizeDriveUrl(logoUrl.trim()),
-    };
+    try {
+      let logoUrl;
+      if (logoFile) {
+        logoUrl = await uploadToCloudinary(logoFile, 'teams');
+      }
 
-    if (editingId) {
-      await updateDoc(doc(db, 'teams', editingId), data);
-    } else {
-      await addDoc(collection(db, 'teams'), { ...data, createdAt: serverTimestamp() });
+      const data = {
+        name: name.trim(),
+        shortName: shortName.trim().toUpperCase() || name.trim().substring(0, 3).toUpperCase(),
+      };
+
+      if (editingId) {
+        if (logoUrl) data.logoUrl = logoUrl;
+        await updateDoc(doc(db, 'teams', editingId), data);
+      } else {
+        data.logoUrl = logoUrl || '';
+        await addDoc(collection(db, 'teams'), { ...data, createdAt: serverTimestamp() });
+      }
+      resetForm();
+    } catch (err) {
+      console.error(err);
+      alert('Error al guardar equipo');
+    } finally {
+      setUploading(false);
     }
-    resetForm();
   };
 
   const handleEdit = (team) => {
     setName(team.name);
     setShortName(team.shortName || '');
-    setLogoUrl(team.logoUrl || '');
+    setLogoFile(null);
+    setLogoPreview(team.logoUrl || '');
     setEditingId(team.id);
+    if (fileRef.current) fileRef.current.value = '';
   };
 
   const handleDelete = async (teamId) => {
@@ -61,8 +75,6 @@ export default function TeamForm({ teams }) {
       await deleteDoc(doc(db, 'teams', teamId));
     }
   };
-
-  const previewUrl = normalizeDriveUrl(logoUrl.trim());
 
   return (
     <div>
@@ -89,35 +101,36 @@ export default function TeamForm({ teams }) {
         </div>
 
         <div className="flex items-center gap-3">
-          {previewUrl && <TeamLogo url={previewUrl} name={name} size={40} />}
-          <input
-            type="url"
-            placeholder="URL del logo (Google Drive, imgur, etc.)"
-            value={logoUrl}
-            onChange={e => setLogoUrl(e.target.value)}
-            className="flex-1 px-3 py-2 rounded-md text-sm"
-            style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          />
+          {logoPreview && <TeamLogo url={logoPreview} name={name} size={40} />}
+          <label
+            className="px-3 py-1.5 rounded-md text-sm font-medium cursor-pointer"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+          >
+            {logoPreview ? 'Cambiar logo' : 'Subir logo'}
+            <input ref={fileRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+          </label>
+          {logoPreview && (
+            <button type="button"
+              onClick={() => { setLogoFile(null); setLogoPreview(''); if (fileRef.current) fileRef.current.value = ''; }}
+              className="text-xs" style={{ color: 'var(--color-danger)' }}>
+              Quitar
+            </button>
+          )}
         </div>
-        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          Podes pegar un link de Google Drive y se convierte automaticamente.
-        </p>
 
         <div className="flex gap-2">
           <button
             type="submit"
-            className="px-4 py-2 rounded-md text-white text-sm font-medium"
+            disabled={uploading}
+            className="px-4 py-2 rounded-md text-white text-sm font-medium disabled:opacity-50"
             style={{ backgroundColor: 'var(--color-btn-primary)' }}
           >
-            {editingId ? 'Actualizar' : 'Agregar'}
+            {uploading ? 'Subiendo...' : editingId ? 'Actualizar' : 'Agregar'}
           </button>
           {editingId && (
-            <button
-              type="button"
-              onClick={resetForm}
+            <button type="button" onClick={resetForm}
               className="px-4 py-2 rounded-md text-sm font-medium"
-              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-            >
+              style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}>
               Cancelar
             </button>
           )}
@@ -139,8 +152,10 @@ export default function TeamForm({ teams }) {
               </div>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => handleEdit(team)} className="text-xs px-2 py-1 rounded" style={{ color: 'var(--color-primary)' }}>Editar</button>
-              <button onClick={() => handleDelete(team.id)} className="text-xs px-2 py-1 rounded" style={{ color: 'var(--color-danger)' }}>Eliminar</button>
+              <button onClick={() => handleEdit(team)} className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
+                style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)' }}>Editar</button>
+              <button onClick={() => handleDelete(team.id)} className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
+                style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}>Eliminar</button>
             </div>
           </div>
         ))}
