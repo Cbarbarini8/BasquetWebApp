@@ -1,6 +1,22 @@
 import { useState } from 'react';
+import TeamLogo from '../common/TeamLogo';
+
+function PlayerPhoto({ url, name, size = 28 }) {
+  if (!url) {
+    return (
+      <div
+        className="rounded-full flex items-center justify-center font-bold text-white shrink-0"
+        style={{ width: size, height: size, backgroundColor: 'var(--color-text-muted)', fontSize: size * 0.35 }}
+      >
+        {(name || '?').charAt(0).toUpperCase()}
+      </div>
+    );
+  }
+  return <img src={url} alt={name} className="rounded-full object-cover shrink-0" style={{ width: size, height: size }} />;
+}
 
 const COLUMNS = [
+  { key: '_pos', label: '#', align: 'center', mobile: true, noSort: true },
   { key: 'playerName', label: 'Jugador', align: 'left', mobile: true },
   { key: 'teamName', label: 'Equipo', align: 'left', mobile: true },
   { key: 'gamesPlayed', label: 'PJ', align: 'center', mobile: true },
@@ -75,8 +91,8 @@ export default function StatsTable({ stats, teams = [] }) {
               {COLUMNS.map(col => (
                 <th
                   key={col.key}
-                  onClick={() => handleSort(col.key)}
-                  className={`px-2 py-3 font-semibold cursor-pointer select-none whitespace-nowrap ${
+                  onClick={() => !col.noSort && handleSort(col.key)}
+                  className={`px-2 py-3 font-semibold ${col.noSort ? '' : 'cursor-pointer'} select-none whitespace-nowrap ${
                     col.align === 'left' ? 'text-left' : 'text-center'
                   } ${col.mobile ? '' : 'hidden lg:table-cell'}`}
                 >
@@ -103,13 +119,25 @@ export default function StatsTable({ stats, teams = [] }) {
                     className={`px-2 py-2.5 whitespace-nowrap ${
                       col.align === 'left' ? 'text-left' : 'text-center'
                     } ${col.mobile ? '' : 'hidden lg:table-cell'} ${
-                      col.key === 'playerName' ? 'font-semibold' : ''
-                    } ${col.key === 'points' ? 'font-bold' : ''}`}
+                      col.key === 'points' ? 'font-bold' : ''
+                    }`}
                     style={{
-                      color: col.key === 'points' ? 'var(--color-primary)' : 'var(--color-text)',
+                      color: col.key === 'points' ? 'var(--color-primary)' : col.key === '_pos' ? 'var(--color-text-muted)' : 'var(--color-text)',
                     }}
                   >
-                    {col.format ? col.format(row) : row[col.key]}
+                    {col.key === '_pos' ? (
+                      <span className="font-medium">{idx + 1}</span>
+                    ) : col.key === 'playerName' ? (
+                      <div className="flex items-center gap-2">
+                        <PlayerPhoto url={row.playerPhotoUrl} name={row.playerName} size={28} />
+                        <span className="font-semibold">{row.playerName}</span>
+                      </div>
+                    ) : col.key === 'teamName' ? (
+                      <div className="flex items-center gap-2">
+                        <TeamLogo url={row.teamLogoUrl} name={row.teamName} size={22} />
+                        <span>{row.teamName}</span>
+                      </div>
+                    ) : col.format ? col.format(row) : row[col.key]}
                   </td>
                 ))}
               </tr>

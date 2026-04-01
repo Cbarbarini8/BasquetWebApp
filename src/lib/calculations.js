@@ -72,17 +72,20 @@ export function computeStandings(matches, teams, config = { pointsForWin: 2, poi
  */
 export function computePlayerStats(events, players, teams) {
   const teamMap = {};
-  teams.forEach(t => { teamMap[t.id] = t.name; });
+  teams.forEach(t => { teamMap[t.id] = { name: t.name, logoUrl: t.logoUrl || '' }; });
 
   const stats = {};
 
   players.forEach(player => {
+    const team = teamMap[player.teamId] || { name: '', logoUrl: '' };
     stats[player.id] = {
       playerId: player.id,
       playerName: `${player.firstName} ${player.lastName}`,
       playerNumber: player.number,
+      playerPhotoUrl: player.photoUrl || '',
       teamId: player.teamId,
-      teamName: teamMap[player.teamId] || '',
+      teamName: team.name,
+      teamLogoUrl: team.logoUrl,
       gamesPlayed: 0,
       points: 0,
       twoMade: 0,
