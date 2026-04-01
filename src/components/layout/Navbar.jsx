@@ -12,6 +12,7 @@ export default function Navbar() {
     { to: '/', label: 'Fixture' },
     { to: '/standings', label: 'Posiciones' },
     { to: '/stats', label: 'Estadisticas' },
+    { to: '/gallery', label: 'Galeria' },
   ];
 
   const isActive = (path) => {
