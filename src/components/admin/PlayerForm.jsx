@@ -3,6 +3,8 @@ import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from '
 import { db } from '../../lib/firebase';
 import { generateToken } from '../../lib/utils';
 import { uploadToCloudinary } from '../../lib/cloudinary';
+import { logAction } from '../../lib/audit';
+import { IconButton, EditIcon, DeleteIcon, LinkIcon, CheckIcon, XIcon } from '../common/Icons';
 
 function PlayerPhoto({ url, name, size = 36 }) {
   if (!url) {
@@ -18,7 +20,7 @@ function PlayerPhoto({ url, name, size = 36 }) {
   return <img src={url} alt={name} className="rounded-full object-cover shrink-0" style={{ width: size, height: size }} />;
 }
 
-export default function PlayerForm({ players, teams }) {
+export default function PlayerForm({ players, teams, canEdit, user }) {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [number, setNumber] = useState('');
@@ -71,9 +73,10 @@ export default function PlayerForm({ players, teams }) {
       if (editingId) {
         if (photoUrl) data.photoUrl = photoUrl;
         await updateDoc(doc(db, 'players', editingId), data);
+        await logAction(user, 'update', 'players', editingId, `Edito jugador: ${data.firstName} ${data.lastName}`);
       } else {
         const token = generateToken();
-        await addDoc(collection(db, 'players'), {
+        const ref = await addDoc(collection(db, 'players'), {
           ...data,
           photoUrl,
           photoStatus: photoUrl ? 'approved' : 'none',
@@ -81,6 +84,7 @@ export default function PlayerForm({ players, teams }) {
           active: true,
           createdAt: serverTimestamp(),
         });
+        await logAction(user, 'create', 'players', ref.id, `Creo jugador: ${data.firstName} ${data.lastName}`);
       }
       resetForm();
     } catch (err) {
@@ -102,9 +106,10 @@ export default function PlayerForm({ players, teams }) {
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const handleDelete = async (playerId) => {
+  const handleDelete = async (player) => {
     if (window.confirm('Eliminar este jugador?')) {
-      await deleteDoc(doc(db, 'players', playerId));
+      await deleteDoc(doc(db, 'players', player.id));
+      await logAction(user, 'delete', 'players', player.id, `Elimino jugador: ${player.firstName} ${player.lastName}`);
     }
   };
 
@@ -114,6 +119,7 @@ export default function PlayerForm({ players, teams }) {
       pendingPhotoUrl: null,
       photoStatus: 'approved',
     });
+    await logAction(user, 'approve', 'players', player.id, `Aprobo foto de: ${player.firstName} ${player.lastName}`);
   };
 
   const handleReject = async (player) => {
@@ -121,6 +127,7 @@ export default function PlayerForm({ players, teams }) {
       pendingPhotoUrl: null,
       photoStatus: player.photoUrl ? 'approved' : 'none',
     });
+    await logAction(user, 'reject', 'players', player.id, `Rechazo foto de: ${player.firstName} ${player.lastName}`);
   };
 
   const generateUploadLink = async (player) => {
@@ -182,20 +189,8 @@ export default function PlayerForm({ players, teams }) {
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button
-                      onClick={() => handleApprove(player)}
-                      className="text-xs px-3 py-1 rounded cursor-pointer font-medium text-white"
-                      style={{ backgroundColor: 'var(--color-success)' }}
-                    >
-                      Aprobar
-                    </button>
-                    <button
-                      onClick={() => handleReject(player)}
-                      className="text-xs px-3 py-1 rounded cursor-pointer font-medium"
-                      style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}
-                    >
-                      Rechazar
-                    </button>
+                    <IconButton icon={CheckIcon} label="Aprobar" onClick={() => handleApprove(player)} color="var(--color-success)" />
+                    <IconButton icon={XIcon} label="Rechazar" onClick={() => handleReject(player)} color="var(--color-danger)" />
                   </div>
                 </div>
               ))}
@@ -205,7 +200,7 @@ export default function PlayerForm({ players, teams }) {
       )}
 
       {/* Add/edit form */}
-      <form onSubmit={handleSubmit} className="space-y-3 mb-6">
+      {canEdit && <form onSubmit={handleSubmit} className="space-y-3 mb-6">
         <div className="flex flex-wrap gap-2">
           <input type="text" placeholder="Nombre" value={firstName} onChange={e => setFirstName(e.target.value)} required
             className="flex-1 min-w-[120px] px-3 py-2 rounded-md text-sm" style={inputStyle} />
@@ -243,7 +238,7 @@ export default function PlayerForm({ players, teams }) {
             </button>
           )}
         </div>
-      </form>
+      </form>}
 
       {/* Filter */}
       <div className="mb-3">
@@ -278,20 +273,13 @@ export default function PlayerForm({ players, teams }) {
                 )}
               </div>
             </div>
-            <div className="flex gap-1 flex-wrap">
-              <button
-                onClick={() => generateUploadLink(player)}
-                className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
-                style={{ color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}
-                title="Copiar link de carga de foto"
-              >
-                {copiedId === player.id ? 'Copiado!' : 'Link foto'}
-              </button>
-              <button onClick={() => handleEdit(player)} className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
-                style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)' }}>Editar</button>
-              <button onClick={() => handleDelete(player.id)} className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
-                style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}>Eliminar</button>
-            </div>
+            {canEdit && (
+              <div className="flex gap-1 flex-wrap items-center">
+                <IconButton icon={LinkIcon} label={copiedId === player.id ? 'Copiado!' : 'Link foto'} onClick={() => generateUploadLink(player)} color="var(--color-text-secondary)" />
+                <IconButton icon={EditIcon} label="Editar" onClick={() => handleEdit(player)} />
+                <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => handleDelete(player)} color="var(--color-danger)" />
+              </div>
+            )}
           </div>
         ))}
       </div>

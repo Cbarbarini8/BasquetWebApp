@@ -31,7 +31,7 @@ const EVENT_LABELS = {
   'turnover': 'Perdida',
 };
 
-export default function LiveScoring({ match, events, homePlayers, awayPlayers, homeTeam, awayTeam }) {
+export default function LiveScoring({ match, events, homePlayers, awayPlayers, homeTeam, awayTeam, canEdit = true, user }) {
   const [selectedPlayer, setSelectedPlayer] = useState({ home: '', away: '' });
 
   const addEvent = async (side, eventDef) => {
@@ -102,7 +102,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
         {team?.name || 'Equipo'}
       </h3>
 
-      <select
+      {canEdit && <select
         value={selectedPlayer[side]}
         onChange={e => setSelectedPlayer(prev => ({ ...prev, [side]: e.target.value }))}
         className="w-full px-3 py-2 rounded-md text-sm mb-3"
@@ -112,9 +112,9 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
         {players.map(p => (
           <option key={p.id} value={p.id}>#{p.number} {p.firstName} {p.lastName}</option>
         ))}
-      </select>
+      </select>}
 
-      <div className="grid grid-cols-3 gap-1.5 mb-4">
+      {canEdit && <div className="grid grid-cols-3 gap-1.5 mb-4">
         {EVENT_BUTTONS.map((btn, idx) => (
           <button
             key={idx}
@@ -126,7 +126,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
             {btn.label}
           </button>
         ))}
-      </div>
+      </div>}
 
       <div className="space-y-1 max-h-60 overflow-y-auto">
         {events
@@ -143,13 +143,15 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                   <strong>#{player?.number}</strong> {player?.lastName} - {getEventLabel(event)}
                   <span className="ml-1" style={{ color: 'var(--color-text-muted)' }}>Q{event.quarter}</span>
                 </span>
-                <button
-                  onClick={() => undoEvent(event)}
-                  className="text-xs px-1.5 py-0.5 rounded"
-                  style={{ color: 'var(--color-danger)' }}
-                >
-                  Deshacer
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => undoEvent(event)}
+                    className="text-xs px-1.5 py-0.5 rounded"
+                    style={{ color: 'var(--color-danger)' }}
+                  >
+                    Deshacer
+                  </button>
+                )}
               </div>
             );
           })}

@@ -1,12 +1,30 @@
-import { useState } from 'react';
-import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { useState, useEffect } from 'react';
+import { collection, addDoc, doc, updateDoc, deleteDoc, getDocs, serverTimestamp, Timestamp, orderBy, query, writeBatch } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../lib/firebase';
+import { logAction } from '../../lib/audit';
+import { IconButton, EditIcon, DeleteIcon, PlayIcon, StopIcon, CalendarIcon, ClipboardIcon, UndoIcon } from '../common/Icons';
 
-function MatchEditor({ match, teamsMap, courts, onClose }) {
+const EVENT_TYPES = [
+  { type: 'ft', label: 'TL', made: true },
+  { type: '2pt', label: '+2', made: true },
+  { type: '3pt', label: '+3', made: true },
+  { type: 'foul', label: 'Falta' },
+  { type: 'assist', label: 'Asist' },
+  { type: 'offRebound', label: 'Reb Of' },
+  { type: 'defRebound', label: 'Reb Def' },
+  { type: 'steal', label: 'Robo' },
+  { type: 'block', label: 'Tapon' },
+  { type: 'turnover', label: 'Perdida' },
+];
+
+function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
   const home = teamsMap[match.homeTeamId]?.name || 'TBD';
   const away = teamsMap[match.awayTeamId]?.name || 'TBD';
   const isFinished = match.status === 'finished';
+
+  const homePlayers = allPlayers.filter(p => p.teamId === match.homeTeamId).sort((a, b) => a.number - b.number);
+  const awayPlayers = allPlayers.filter(p => p.teamId === match.awayTeamId).sort((a, b) => a.number - b.number);
 
   const toDateInputValue = (d) => {
     if (!d) return '';
@@ -22,6 +40,23 @@ function MatchEditor({ match, teamsMap, courts, onClose }) {
   const [awayScore, setAwayScore] = useState(String(match.awayScore || 0));
   const [saving, setSaving] = useState(false);
 
+  // Stats state
+  const [showStats, setShowStats] = useState(false);
+  const [events, setEvents] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [addPlayerSide, setAddPlayerSide] = useState('');
+  const [addPlayerId, setAddPlayerId] = useState('');
+  const [addEventType, setAddEventType] = useState('');
+
+  useEffect(() => {
+    if (!showStats) return;
+    setEventsLoading(true);
+    getDocs(query(collection(db, `matches/${match.id}/events`), orderBy('timestamp', 'desc')))
+      .then(snap => setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(console.error)
+      .finally(() => setEventsLoading(false));
+  }, [showStats]);
+
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -35,6 +70,7 @@ function MatchEditor({ match, teamsMap, courts, onClose }) {
         data.awayScore = parseInt(awayScore) || 0;
       }
       await updateDoc(doc(db, 'matches', match.id), data);
+      await logAction(user, 'update', 'matches', match.id, `Edito partido: ${home} vs ${away}`);
       onClose();
     } catch (err) {
       console.error('Error updating match:', err);
@@ -42,6 +78,64 @@ function MatchEditor({ match, teamsMap, courts, onClose }) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleAddEvent = async (evtDef) => {
+    if (!addPlayerId) return;
+
+    const teamId = addPlayerSide === 'home' ? match.homeTeamId : match.awayTeamId;
+    const eventData = {
+      type: evtDef.type,
+      playerId: addPlayerId,
+      teamId,
+      quarter: 1,
+      timestamp: serverTimestamp(),
+    };
+    if (evtDef.made !== undefined) eventData.made = evtDef.made;
+
+    const ref = await addDoc(collection(db, `matches/${match.id}/events`), eventData);
+    setEvents(prev => [{ id: ref.id, ...eventData, timestamp: new Date() }, ...prev]);
+  };
+
+  const handleDeleteEvent = async (eventId) => {
+    await deleteDoc(doc(db, `matches/${match.id}/events`, eventId));
+    setEvents(prev => prev.filter(e => e.id !== eventId));
+  };
+
+  const handleClearAll = async () => {
+    if (!window.confirm(`Eliminar TODAS las estadisticas de este partido (${events.length} eventos)?`)) return;
+    const batch = writeBatch(db);
+    events.forEach(e => batch.delete(doc(db, `matches/${match.id}/events`, e.id)));
+    await batch.commit();
+    await logAction(user, 'delete', 'matches', match.id, `Limpio estadisticas: ${home} vs ${away} (${events.length} eventos)`);
+    setEvents([]);
+  };
+
+  const getPlayerName = (playerId) => {
+    const p = allPlayers.find(x => x.id === playerId);
+    return p ? `#${p.number} ${p.lastName}` : playerId;
+  };
+
+  const getEventLabel = (event) => {
+    const def = EVENT_TYPES.find(e => e.type === event.type);
+    return def?.label || event.type;
+  };
+
+  // Group events by team and player for summary
+  const eventSummary = (teamId) => {
+    const teamEvents = events.filter(e => e.teamId === teamId);
+    const byPlayer = {};
+    teamEvents.forEach(e => {
+      if (!byPlayer[e.playerId]) byPlayer[e.playerId] = [];
+      byPlayer[e.playerId].push(e);
+    });
+    return Object.entries(byPlayer).map(([playerId, evts]) => ({
+      playerId,
+      name: getPlayerName(playerId),
+      count: evts.length,
+      points: evts.filter(e => ['2pt', '3pt', 'ft'].includes(e.type) && e.made).reduce((sum, e) => sum + (e.type === '3pt' ? 3 : e.type === '2pt' ? 2 : 1), 0),
+      events: evts,
+    })).sort((a, b) => b.points - a.points);
   };
 
   const inputStyle = { backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text)' };
@@ -91,17 +185,128 @@ function MatchEditor({ match, teamsMap, courts, onClose }) {
           </select>
         </div>
       </div>
-      <div className="flex gap-2">
+
+      <div className="flex gap-2 flex-wrap">
         <button onClick={handleSave} disabled={saving}
           className="text-xs px-3 py-1.5 rounded text-white font-medium disabled:opacity-50"
           style={{ backgroundColor: 'var(--color-btn-primary)' }}>
-          {saving ? 'Guardando...' : 'Guardar'}
+          {saving ? 'Guardando...' : 'Guardar datos'}
+        </button>
+        <button onClick={() => setShowStats(!showStats)}
+          className="text-xs px-3 py-1.5 rounded font-medium"
+          style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)' }}>
+          {showStats ? 'Ocultar estadisticas' : 'Estadisticas'}
         </button>
         <button onClick={onClose} className="text-xs px-3 py-1.5 rounded"
           style={{ color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
           Cancelar
         </button>
       </div>
+
+      {/* Stats section */}
+      {showStats && (
+        <div className="pt-3 space-y-4" style={{ borderTop: '1px solid var(--color-border)' }}>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--color-primary)' }}>
+              Estadisticas ({events.length} eventos)
+            </p>
+            {events.length > 0 && (
+              <button onClick={handleClearAll}
+                className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
+                style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}>
+                Limpiar todo
+              </button>
+            )}
+          </div>
+
+          {/* Add event */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <select value={addPlayerSide} onChange={e => { setAddPlayerSide(e.target.value); setAddPlayerId(''); }}
+                className="px-2 py-1.5 rounded-md text-xs" style={inputStyle}>
+                <option value="">Equipo...</option>
+                <option value="home">{home}</option>
+                <option value="away">{away}</option>
+              </select>
+              <select value={addPlayerId} onChange={e => setAddPlayerId(e.target.value)}
+                className="flex-1 min-w-[180px] px-2 py-1.5 rounded-md text-xs" style={inputStyle} disabled={!addPlayerSide}>
+                <option value="">Seleccionar jugador...</option>
+                {(addPlayerSide === 'home' ? homePlayers : addPlayerSide === 'away' ? awayPlayers : []).map(p => (
+                  <option key={p.id} value={p.id}>#{p.number} {p.firstName} {p.lastName}</option>
+                ))}
+              </select>
+            </div>
+            {addPlayerId && (
+              <div className="flex flex-wrap gap-1">
+                {EVENT_TYPES.map(evt => (
+                  <button key={evt.type} onClick={() => handleAddEvent(evt)}
+                    className="text-xs px-2.5 py-1.5 rounded font-medium text-white active:scale-95 transition-transform"
+                    style={{ backgroundColor: ['ft', '2pt', '3pt'].includes(evt.type) ? 'var(--color-success)' : evt.type === 'foul' ? 'var(--color-danger)' : 'var(--color-primary)' }}>
+                    {evt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {eventsLoading ? (
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Cargando...</p>
+          ) : events.length === 0 ? (
+            <p className="text-xs text-center py-4" style={{ color: 'var(--color-text-muted)' }}>
+              Sin estadisticas cargadas
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Home team summary */}
+              <div>
+                <p className="text-xs font-bold mb-2" style={{ color: 'var(--color-text)' }}>{home}</p>
+                {eventSummary(match.homeTeamId).map(ps => (
+                  <div key={ps.playerId} className="mb-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+                        {ps.name} — {ps.points} pts
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {ps.events.map(evt => (
+                        <button key={evt.id} onClick={() => handleDeleteEvent(evt.id)}
+                          className="text-xs px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                          title="Click para eliminar">
+                          {getEventLabel(evt)} x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Away team summary */}
+              <div>
+                <p className="text-xs font-bold mb-2" style={{ color: 'var(--color-text)' }}>{away}</p>
+                {eventSummary(match.awayTeamId).map(ps => (
+                  <div key={ps.playerId} className="mb-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+                        {ps.name} — {ps.points} pts
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {ps.events.map(evt => (
+                        <button key={evt.id} onClick={() => handleDeleteEvent(evt.id)}
+                          className="text-xs px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                          title="Click para eliminar">
+                          {getEventLabel(evt)} x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -284,10 +489,18 @@ function formatMatchDate(d) {
   return date.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-export default function MatchManager({ matches, teamsMap, teams, courts, courtsMap, seasonId }) {
+export default function MatchManager({ matches, teamsMap, teams, players, courts, courtsMap, seasonId, canEdit, user }) {
   const navigate = useNavigate();
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
+
+  const getMatchLabel = (matchId) => {
+    const m = matches.find(x => x.id === matchId);
+    if (!m) return matchId;
+    const h = teamsMap[m.homeTeamId]?.name || 'TBD';
+    const a = teamsMap[m.awayTeamId]?.name || 'TBD';
+    return `${h} vs ${a}`;
+  };
 
   const startMatch = async (matchId) => {
     await updateDoc(doc(db, 'matches', matchId), {
@@ -297,6 +510,7 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
       awayScore: 0,
       startedAt: serverTimestamp(),
     });
+    await logAction(user, 'start', 'matches', matchId, `Inicio partido: ${getMatchLabel(matchId)}`);
   };
 
   const finishMatch = async (matchId) => {
@@ -305,6 +519,7 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
       status: 'finished',
       finishedAt: serverTimestamp(),
     });
+    await logAction(user, 'finish', 'matches', matchId, `Finalizo partido: ${getMatchLabel(matchId)}`);
   };
 
   const resetMatch = async (matchId) => {
@@ -317,11 +532,14 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
       startedAt: null,
       finishedAt: null,
     });
+    await logAction(user, 'reset', 'matches', matchId, `Reseteo partido: ${getMatchLabel(matchId)}`);
   };
 
   const deleteMatch = async (matchId) => {
     if (!window.confirm('Eliminar este partido?')) return;
+    const label = getMatchLabel(matchId);
     await deleteDoc(doc(db, 'matches', matchId));
+    await logAction(user, 'delete', 'matches', matchId, `Elimino partido: ${label}`);
   };
 
   const getMatchSortValue = (m) => {
@@ -337,13 +555,13 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
     if (!groupedByRound[r]) groupedByRound[r] = [];
     groupedByRound[r].push(m);
   });
-  Object.values(groupedByRound).forEach(arr => arr.sort((a, b) => getMatchSortValue(a) - getMatchSortValue(b)));
+  Object.values(groupedByRound).forEach(arr => arr.sort((a, b) => getMatchSortValue(b) - getMatchSortValue(a)));
 
-  const roundNumbers = Object.keys(groupedByRound).map(Number).sort((a, b) => a - b);
+  const roundNumbers = Object.keys(groupedByRound).map(Number).sort((a, b) => b - a);
 
   return (
     <div>
-      {showForm ? (
+      {canEdit && (showForm ? (
         <ManualMatchForm
           teams={teams || Object.values(teamsMap)}
           courts={courts || []}
@@ -358,7 +576,7 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
         >
           + Agregar partido manual
         </button>
-      )}
+      ))}
 
       <div className="space-y-6">
         {roundNumbers.map(round => (
@@ -407,48 +625,28 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
                           </span>
                         )}
                       </div>
-                      <div className="flex gap-1 flex-wrap">
-                        {match.status === 'scheduled' && (
+                      <div className="flex gap-1 flex-wrap items-center">
+                        {canEdit && match.status === 'scheduled' && (
                           <>
-                            <button
-                              onClick={() => setEditingId(editingId === match.id ? null : match.id)}
-                              className="text-xs px-3 py-1 rounded cursor-pointer font-medium"
-                              style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)' }}
-                            >
-                              {editingId === match.id ? 'Cerrar' : 'Programar'}
-                            </button>
-                            <button onClick={() => startMatch(match.id)} className="text-xs px-3 py-1 rounded text-white cursor-pointer font-medium" style={{ backgroundColor: 'var(--color-success)' }}>
-                              Iniciar
-                            </button>
+                            <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
+                            <IconButton icon={PlayIcon} label="Iniciar" onClick={() => startMatch(match.id)} color="var(--color-success)" />
                           </>
                         )}
                         {match.status === 'live' && (
                           <>
-                            <button onClick={() => navigate(`/admin/match/${match.id}`)} className="text-xs px-3 py-1 rounded text-white cursor-pointer font-medium" style={{ backgroundColor: 'var(--color-primary)' }}>
-                              Planilla
-                            </button>
-                            <button onClick={() => finishMatch(match.id)} className="text-xs px-3 py-1 rounded text-white cursor-pointer font-medium" style={{ backgroundColor: 'var(--color-warning)' }}>
-                              Finalizar
-                            </button>
+                            <IconButton icon={ClipboardIcon} label="Planilla" onClick={() => navigate(`/admin/match/${match.id}`)} />
+                            {canEdit && <IconButton icon={StopIcon} label="Finalizar" onClick={() => finishMatch(match.id)} color="var(--color-warning)" />}
                           </>
                         )}
-                        {match.status === 'finished' && (
-                          <button
-                            onClick={() => setEditingId(editingId === match.id ? null : match.id)}
-                            className="text-xs px-3 py-1 rounded cursor-pointer font-medium"
-                            style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)' }}
-                          >
-                            {editingId === match.id ? 'Cerrar' : 'Editar'}
-                          </button>
+                        {canEdit && match.status === 'finished' && (
+                          <IconButton icon={EditIcon} label={editingId === match.id ? 'Cerrar' : 'Editar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
                         )}
-                        {match.status !== 'finished' && (
-                          <button onClick={() => resetMatch(match.id)} className="text-xs px-3 py-1 rounded cursor-pointer font-medium" style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}>
-                            Reset
-                          </button>
+                        {canEdit && match.status !== 'finished' && (
+                          <IconButton icon={UndoIcon} label="Reset" onClick={() => resetMatch(match.id)} color="var(--color-text-muted)" />
                         )}
-                        <button onClick={() => deleteMatch(match.id)} className="text-xs px-3 py-1 rounded cursor-pointer font-medium" style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}>
-                          Eliminar
-                        </button>
+                        {canEdit && (
+                          <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => deleteMatch(match.id)} color="var(--color-danger)" />
+                        )}
                       </div>
                     </div>
 
@@ -457,6 +655,8 @@ export default function MatchManager({ matches, teamsMap, teams, courts, courtsM
                         match={match}
                         teamsMap={teamsMap}
                         courts={courts || []}
+                        allPlayers={players || []}
+                        user={user}
                         onClose={() => setEditingId(null)}
                       />
                     )}

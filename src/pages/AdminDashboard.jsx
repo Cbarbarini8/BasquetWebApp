@@ -5,6 +5,7 @@ import { usePlayers } from '../hooks/usePlayers';
 import { useMatches } from '../hooks/useMatches';
 import { useSeasons } from '../hooks/useSeasons';
 import { useCourts } from '../hooks/useCourts';
+import { usePosts } from '../hooks/usePosts';
 import PageShell from '../components/layout/PageShell';
 import TeamForm from '../components/admin/TeamForm';
 import PlayerForm from '../components/admin/PlayerForm';
@@ -12,28 +13,43 @@ import FixtureGenerator from '../components/admin/FixtureGenerator';
 import MatchManager from '../components/admin/MatchManager';
 import SeasonForm from '../components/admin/SeasonForm';
 import CourtForm from '../components/admin/CourtForm';
+import PostManager from '../components/admin/PostManager';
+import UserManager from '../components/admin/UserManager';
+import AuditLog from '../components/admin/AuditLog';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
-const TABS = [
-  { id: 'seasons', label: 'Temporadas' },
-  { id: 'teams', label: 'Equipos' },
-  { id: 'players', label: 'Jugadores' },
-  { id: 'courts', label: 'Canchas' },
-  { id: 'fixture', label: 'Fixture' },
-  { id: 'matches', label: 'Partidos' },
+const ALL_TABS = [
+  { id: 'seasons', label: 'Temporadas', permission: 'seasons' },
+  { id: 'teams', label: 'Equipos', permission: 'teams' },
+  { id: 'players', label: 'Jugadores', permission: 'players' },
+  { id: 'courts', label: 'Canchas', permission: 'courts' },
+  { id: 'fixture', label: 'Fixture', permission: 'fixture' },
+  { id: 'matches', label: 'Partidos', permission: 'matches' },
+  { id: 'posts', label: 'Instagram', permission: 'posts' },
+  { id: 'users', label: 'Usuarios', ownerOnly: true },
+  { id: 'audit', label: 'Auditoria', ownerOnly: true },
 ];
 
 export default function AdminDashboard() {
-  const { logout } = useAuth();
+  const { user, logout, isOwner, canView, canEdit } = useAuth();
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: players, loading: playersLoading } = usePlayers();
   const { data: seasons, loading: seasonsLoading } = useSeasons();
   const { data: courts, loading: courtsLoading } = useCourts();
-  const [activeTab, setActiveTab] = useState('seasons');
+  const { data: posts, loading: postsLoading } = usePosts();
 
   const activeSeason = useMemo(() => seasons.find(s => s.active) || null, [seasons]);
-
   const { data: matches, loading: matchesLoading } = useMatches(activeSeason?.id);
+
+  const visibleTabs = useMemo(() => {
+    return ALL_TABS.filter(tab => {
+      if (tab.ownerOnly) return isOwner;
+      return canView(tab.permission);
+    });
+  }, [isOwner, canView]);
+
+  const [activeTab, setActiveTab] = useState(null);
+  const currentTab = activeTab || visibleTabs[0]?.id;
 
   const teamsMap = useMemo(() => {
     const map = {};
@@ -47,7 +63,7 @@ export default function AdminDashboard() {
     return map;
   }, [courts]);
 
-  const loading = teamsLoading || playersLoading || matchesLoading || seasonsLoading || courtsLoading;
+  const loading = teamsLoading || playersLoading || matchesLoading || seasonsLoading || courtsLoading || postsLoading;
 
   return (
     <PageShell>
@@ -72,15 +88,15 @@ export default function AdminDashboard() {
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 overflow-x-auto">
-        {TABS.map(tab => (
+        {visibleTabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className="px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap"
             style={{
-              backgroundColor: activeTab === tab.id ? 'var(--color-primary)' : 'transparent',
-              color: activeTab === tab.id ? '#ffffff' : 'var(--color-text-secondary)',
-              border: activeTab === tab.id ? 'none' : '1px solid var(--color-border)',
+              backgroundColor: currentTab === tab.id ? 'var(--color-primary)' : 'transparent',
+              color: currentTab === tab.id ? '#ffffff' : 'var(--color-text-secondary)',
+              border: currentTab === tab.id ? 'none' : '1px solid var(--color-border)',
             }}
           >
             {tab.label}
@@ -92,12 +108,15 @@ export default function AdminDashboard() {
         <LoadingSpinner />
       ) : (
         <>
-          {activeTab === 'seasons' && <SeasonForm seasons={seasons} />}
-          {activeTab === 'teams' && <TeamForm teams={teams} />}
-          {activeTab === 'players' && <PlayerForm players={players} teams={teams} />}
-          {activeTab === 'courts' && <CourtForm courts={courts} />}
-          {activeTab === 'fixture' && <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} />}
-          {activeTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} />}
+          {currentTab === 'seasons' && <SeasonForm seasons={seasons} canEdit={canEdit('seasons')} user={user} />}
+          {currentTab === 'teams' && <TeamForm teams={teams} canEdit={canEdit('teams')} user={user} />}
+          {currentTab === 'players' && <PlayerForm players={players} teams={teams} canEdit={canEdit('players')} user={user} />}
+          {currentTab === 'courts' && <CourtForm courts={courts} canEdit={canEdit('courts')} user={user} />}
+          {currentTab === 'fixture' && <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit('fixture')} user={user} />}
+          {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} user={user} />}
+          {currentTab === 'posts' && <PostManager posts={posts} canEdit={canEdit('posts')} user={user} />}
+          {currentTab === 'users' && isOwner && <UserManager currentUser={user} />}
+          {currentTab === 'audit' && isOwner && <AuditLog />}
         </>
       )}
     </PageShell>

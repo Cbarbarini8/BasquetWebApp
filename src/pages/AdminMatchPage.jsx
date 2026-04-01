@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { useDocument } from '../hooks/useDocument';
 import { useMatchEvents } from '../hooks/useMatchEvents';
 import { useTeams } from '../hooks/useTeams';
@@ -10,6 +11,7 @@ import LoadingSpinner from '../components/common/LoadingSpinner';
 
 export default function AdminMatchPage() {
   const { matchId } = useParams();
+  const { user, canEdit } = useAuth();
   const { data: match, loading: matchLoading } = useDocument(`matches/${matchId}`);
   const { data: events, loading: eventsLoading } = useMatchEvents(matchId);
   const { data: teams, loading: teamsLoading } = useTeams();
@@ -63,6 +65,8 @@ export default function AdminMatchPage() {
         awayPlayers={awayPlayers}
         homeTeam={homeTeam}
         awayTeam={awayTeam}
+        canEdit={canEdit('scoring')}
+        user={user}
       />
     </PageShell>
   );

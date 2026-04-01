@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { logAction } from '../../lib/audit';
 
 function generateRoundRobin(teamIds) {
   const teams = [...teamIds];
@@ -28,7 +29,7 @@ function generateRoundRobin(teamIds) {
   return rounds;
 }
 
-export default function FixtureGenerator({ teams, matches, activeSeason }) {
+export default function FixtureGenerator({ teams, matches, activeSeason, canEdit, user }) {
   const [loading, setLoading] = useState(false);
 
   const hasMatches = matches.length > 0;
@@ -68,6 +69,7 @@ export default function FixtureGenerator({ teams, matches, activeSeason }) {
         }
       }
 
+      await logAction(user, 'create', 'matches', null, `Genero fixture: ${rounds.length} fechas para "${activeSeason.name}"`);
       alert(`Fixture generado: ${rounds.length} fechas para "${activeSeason.name}". Asigna dia y horario a cada partido desde la pestaña "Partidos".`);
     } catch (err) {
       console.error('Error generating fixture:', err);
@@ -114,7 +116,7 @@ export default function FixtureGenerator({ teams, matches, activeSeason }) {
 
       <button
         onClick={handleGenerate}
-        disabled={loading || teams.length < 2 || hasMatches || !activeSeason}
+        disabled={loading || teams.length < 2 || hasMatches || !activeSeason || !canEdit}
         className="px-4 py-2 rounded-md text-white text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
         style={{ backgroundColor: 'var(--color-btn-primary)' }}
       >

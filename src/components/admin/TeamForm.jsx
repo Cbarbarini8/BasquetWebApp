@@ -2,9 +2,11 @@ import { useState, useRef } from 'react';
 import { collection, addDoc, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { uploadToCloudinary } from '../../lib/cloudinary';
+import { logAction } from '../../lib/audit';
 import TeamLogo from '../common/TeamLogo';
+import { IconButton, EditIcon, DeleteIcon } from '../common/Icons';
 
-export default function TeamForm({ teams }) {
+export default function TeamForm({ teams, canEdit, user }) {
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
   const [logoFile, setLogoFile] = useState(null);
@@ -48,9 +50,11 @@ export default function TeamForm({ teams }) {
       if (editingId) {
         if (logoUrl) data.logoUrl = logoUrl;
         await updateDoc(doc(db, 'teams', editingId), data);
+        await logAction(user, 'update', 'teams', editingId, `Edito equipo: ${data.name}`);
       } else {
         data.logoUrl = logoUrl || '';
-        await addDoc(collection(db, 'teams'), { ...data, createdAt: serverTimestamp() });
+        const ref = await addDoc(collection(db, 'teams'), { ...data, createdAt: serverTimestamp() });
+        await logAction(user, 'create', 'teams', ref.id, `Creo equipo: ${data.name}`);
       }
       resetForm();
     } catch (err) {
@@ -70,15 +74,16 @@ export default function TeamForm({ teams }) {
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const handleDelete = async (teamId) => {
+  const handleDelete = async (team) => {
     if (window.confirm('Eliminar este equipo?')) {
-      await deleteDoc(doc(db, 'teams', teamId));
+      await deleteDoc(doc(db, 'teams', team.id));
+      await logAction(user, 'delete', 'teams', team.id, `Elimino equipo: ${team.name}`);
     }
   };
 
   return (
     <div>
-      <form onSubmit={handleSubmit} className="space-y-3 mb-6">
+      {canEdit && <form onSubmit={handleSubmit} className="space-y-3 mb-6">
         <div className="flex flex-wrap gap-2">
           <input
             type="text"
@@ -135,7 +140,7 @@ export default function TeamForm({ teams }) {
             </button>
           )}
         </div>
-      </form>
+      </form>}
 
       <div className="space-y-2">
         {teams.map(team => (
@@ -151,12 +156,12 @@ export default function TeamForm({ teams }) {
                 <span className="ml-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>{team.shortName}</span>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => handleEdit(team)} className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
-                style={{ color: 'var(--color-primary)', border: '1px solid var(--color-primary)' }}>Editar</button>
-              <button onClick={() => handleDelete(team.id)} className="text-xs px-2 py-1 rounded cursor-pointer font-medium"
-                style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}>Eliminar</button>
-            </div>
+            {canEdit && (
+              <div className="flex gap-1">
+                <IconButton icon={EditIcon} label="Editar" onClick={() => handleEdit(team)} />
+                <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => handleDelete(team)} color="var(--color-danger)" />
+              </div>
+            )}
           </div>
         ))}
       </div>
