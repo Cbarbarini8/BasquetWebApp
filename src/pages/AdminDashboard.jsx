@@ -74,7 +74,7 @@ export default function AdminDashboard() {
         <div className="flex items-center gap-3">
           <div className="text-right">
             <p className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-              {userDoc?.displayName || user?.email}
+              {userDoc?.displayName || userDoc?.email || user?.email}
             </p>
             <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
               {isOwner ? 'Propietario' : 'Administrador'}
