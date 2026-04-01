@@ -1,20 +1,25 @@
 import { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../lib/firebase';
+import { useUserRole } from '../hooks/useUserRole';
 
 const AuthContext = createContext();
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
-      setLoading(false);
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
+
+  const { userDoc, loading: roleLoading, isOwner, isActive, canView, canEdit } = useUserRole(user?.uid);
+
+  const loading = authLoading || (user && roleLoading);
 
   const login = (email, password) => {
     return signInWithEmailAndPassword(auth, email, password);
@@ -25,7 +30,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, userDoc, loading, isOwner, isActive, canView, canEdit, login, logout }}>
       {children}
     </AuthContext.Provider>
   );
