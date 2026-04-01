@@ -31,7 +31,7 @@ const ALL_TABS = [
 ];
 
 export default function AdminDashboard() {
-  const { user, logout, isOwner, canView, canEdit } = useAuth();
+  const { user, userDoc, logout, isOwner, canView, canEdit } = useAuth();
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: players, loading: playersLoading } = usePlayers();
   const { data: seasons, loading: seasonsLoading } = useSeasons();
@@ -67,17 +67,27 @@ export default function AdminDashboard() {
 
   return (
     <PageShell>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-2">
         <h1 className="text-2xl font-bold" style={{ color: 'var(--color-text)' }}>
           Panel de Administracion
         </h1>
-        <button
-          onClick={logout}
-          className="text-sm px-3 py-1.5 rounded-md"
-          style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
-        >
-          Cerrar sesion
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <p className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+              {userDoc?.displayName || user?.email}
+            </p>
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              {isOwner ? 'Propietario' : 'Administrador'}
+            </p>
+          </div>
+          <button
+            onClick={logout}
+            className="text-sm px-3 py-1.5 rounded-md"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+          >
+            Salir
+          </button>
+        </div>
       </div>
 
       {activeSeason && (
