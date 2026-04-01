@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { uploadToCloudinary } from '../lib/cloudinary';
+import { logAction } from '../lib/audit';
 import { useParams } from 'react-router-dom';
 import PageShell from '../components/layout/PageShell';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -58,6 +59,7 @@ export default function PlayerPhotoUpload() {
         pendingPhotoUrl: url,
         photoStatus: 'pending',
       });
+      await logAction({ uid: 'player-self', email: `${player.firstName} ${player.lastName}` }, 'update', 'players', player.id, `Jugador subio foto: ${player.firstName} ${player.lastName}`).catch(() => {});
       setSubmitted(true);
     } catch (err) {
       console.error(err);

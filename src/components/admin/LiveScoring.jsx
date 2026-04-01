@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { collection, addDoc, doc, updateDoc, deleteDoc, writeBatch, increment, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
+import { logAction } from '../../lib/audit';
 
 const EVENT_BUTTONS = [
   { type: '2pt', label: '+2', made: true, points: 2, color: 'var(--color-success)' },
@@ -33,6 +34,12 @@ const EVENT_LABELS = {
 
 export default function LiveScoring({ match, events, homePlayers, awayPlayers, homeTeam, awayTeam, canEdit = true, user }) {
   const [selectedPlayer, setSelectedPlayer] = useState({ home: '', away: '' });
+
+  const allPlayers = [...homePlayers, ...awayPlayers];
+  const getPlayerLabel = (id) => {
+    const p = allPlayers.find(x => x.id === id);
+    return p ? `#${p.number} ${p.lastName}` : id;
+  };
 
   const addEvent = async (side, eventDef) => {
     const playerId = selectedPlayer[side];
@@ -67,6 +74,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     }
 
     await batch.commit();
+    if (user) await logAction(user, 'create', 'matchEvents', match.id, `Evento ${eventDef.label}: ${getPlayerLabel(playerId)}`);
   };
 
   const undoEvent = async (event) => {
@@ -84,10 +92,12 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     }
 
     await batch.commit();
+    if (user) await logAction(user, 'delete', 'matchEvents', match.id, `Deshizo evento: ${getPlayerLabel(event.playerId)}`);
   };
 
   const updateQuarter = async (q) => {
     await updateDoc(doc(db, 'matches', match.id), { quarter: q });
+    if (user) await logAction(user, 'update', 'matches', match.id, `Cambio cuarto a Q${q}`);
   };
 
   const getEventLabel = (event) => {

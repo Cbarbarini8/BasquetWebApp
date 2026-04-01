@@ -95,11 +95,14 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
 
     const ref = await addDoc(collection(db, `matches/${match.id}/events`), eventData);
     setEvents(prev => [{ id: ref.id, ...eventData, timestamp: new Date() }, ...prev]);
+    if (user) await logAction(user, 'create', 'matchEvents', match.id, `Evento ${evtDef.label}: ${getPlayerName(addPlayerId)} (${home} vs ${away})`);
   };
 
   const handleDeleteEvent = async (eventId) => {
+    const evt = events.find(e => e.id === eventId);
     await deleteDoc(doc(db, `matches/${match.id}/events`, eventId));
     setEvents(prev => prev.filter(e => e.id !== eventId));
+    if (user && evt) await logAction(user, 'delete', 'matchEvents', match.id, `Elimino evento: ${getPlayerName(evt.playerId)} (${home} vs ${away})`);
   };
 
   const handleClearAll = async () => {
