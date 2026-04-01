@@ -40,7 +40,7 @@ export default function FixturePage() {
       if (!grouped[r]) grouped[r] = [];
       grouped[r].push(m);
     });
-    const nums = Object.keys(grouped).map(Number).sort((a, b) => a - b);
+    const nums = Object.keys(grouped).map(Number).sort((a, b) => b - a);
     return {
       liveMatches: live,
       rounds: nums.map(r => ({ round: r, matches: grouped[r] })),

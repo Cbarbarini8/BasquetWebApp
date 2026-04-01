@@ -28,13 +28,17 @@ export default function RoundGroup({ round, matches, teamsMap, courtsMap }) {
     const sortedKeys = Object.keys(groups).sort((a, b) => {
       if (a === '__none__') return 1;
       if (b === '__none__') return -1;
-      return a.localeCompare(b);
+      return b.localeCompare(a);
     });
 
     return sortedKeys.map(key => ({
       dateKey: key,
       label: formatDayHeader(key === '__none__' ? null : key),
-      matches: groups[key],
+      matches: groups[key].sort((a, b) => {
+        const timeA = a.scheduledTime || '99:99';
+        const timeB = b.scheduledTime || '99:99';
+        return timeB.localeCompare(timeA);
+      }),
     }));
   }, [matches]);
 

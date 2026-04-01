@@ -1,13 +1,23 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import LiveBadge from '../common/LiveBadge';
 import TeamLogo from '../common/TeamLogo';
 
 export default function MatchCard({ match, homeTeam, awayTeam, court }) {
   const navigate = useNavigate();
+  const [copied, setCopied] = useState(false);
   const isLive = match.status === 'live';
   const isFinished = match.status === 'finished';
   const isScheduled = match.status === 'scheduled';
   const isClickable = isLive || isFinished;
+
+  const handleCopyLink = (e) => {
+    e.stopPropagation();
+    const url = `${window.location.origin}/match/${match.id}`;
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   const hasDate = match.scheduledDate != null;
 
@@ -99,33 +109,59 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
         </div>
       </div>
 
-      {/* Court info */}
-      {court && (
-        <div className="mt-2 text-center">
-          {court.mapsUrl ? (
-            <a
-              href={court.mapsUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              className="text-xs inline-flex items-center gap-1 underline"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              {court.name}
-            </a>
-          ) : (
-            <span className="text-xs inline-flex items-center gap-1" style={{ color: 'var(--color-text-muted)' }}>
-              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-              {court.name}
-            </span>
+      {/* Footer: court + share */}
+      {(court || isClickable) && (
+        <div className="mt-2 flex items-center justify-between">
+          <div className="flex-1" />
+          {court && (
+            <div className="flex-1 text-center">
+              {court.mapsUrl ? (
+                <a
+                  href={court.mapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={e => e.stopPropagation()}
+                  className="text-xs inline-flex items-center gap-1 underline"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  {court.name}
+                </a>
+              ) : (
+                <span className="text-xs inline-flex items-center gap-1" style={{ color: 'var(--color-text-muted)' }}>
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  {court.name}
+                </span>
+              )}
+            </div>
           )}
+          <div className="flex-1 flex justify-end">
+            {isClickable && (
+              <button
+                onClick={handleCopyLink}
+                title={copied ? 'Copiado!' : 'Copiar link'}
+                className="p-1.5 rounded-full transition-opacity hover:opacity-80"
+                style={{ color: copied ? 'var(--color-success)' : 'var(--color-text-muted)' }}
+              >
+                {copied ? (
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                  </svg>
+                )}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
