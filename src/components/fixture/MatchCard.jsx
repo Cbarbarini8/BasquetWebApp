@@ -37,17 +37,18 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
     >
       <div className="flex items-center justify-between">
         {/* Home team */}
-        <div className="flex-1 flex items-center justify-end gap-2">
-          <div className="text-right">
-            <p className="font-semibold text-sm md:text-base" style={{ color: 'var(--color-text)' }}>
-              {homeTeam?.name || 'TBD'}
+        <div className="flex-1 flex items-center justify-end gap-2 min-w-0">
+          <div className="text-right min-w-0">
+            <p className="font-semibold text-sm md:text-base truncate" style={{ color: 'var(--color-text)' }}>
+              <span className="hidden md:inline">{homeTeam?.name || 'TBD'}</span>
+              <span className="md:hidden">{homeTeam?.shortName || homeTeam?.name || 'TBD'}</span>
             </p>
           </div>
           <TeamLogo url={homeTeam?.logoUrl} name={homeTeam?.name} size={36} />
         </div>
 
         {/* Score / Status */}
-        <div className="flex flex-col items-center mx-4 min-w-[100px]">
+        <div className="flex flex-col items-center mx-2 md:mx-4 min-w-[80px] md:min-w-[100px]">
           {isScheduled ? (
             <div className="text-center">
               {hasDate ? (
@@ -99,11 +100,12 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
         </div>
 
         {/* Away team */}
-        <div className="flex-1 flex items-center gap-2">
+        <div className="flex-1 flex items-center gap-2 min-w-0">
           <TeamLogo url={awayTeam?.logoUrl} name={awayTeam?.name} size={36} />
-          <div className="text-left">
-            <p className="font-semibold text-sm md:text-base" style={{ color: 'var(--color-text)' }}>
-              {awayTeam?.name || 'TBD'}
+          <div className="text-left min-w-0">
+            <p className="font-semibold text-sm md:text-base truncate" style={{ color: 'var(--color-text)' }}>
+              <span className="hidden md:inline">{awayTeam?.name || 'TBD'}</span>
+              <span className="md:hidden">{awayTeam?.shortName || awayTeam?.name || 'TBD'}</span>
             </p>
           </div>
         </div>

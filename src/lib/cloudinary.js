@@ -8,8 +8,6 @@ export async function uploadToCloudinary(file, folder = '', publicId = '') {
   if (folder) formData.append('folder', folder);
   if (publicId) {
     formData.append('public_id', publicId);
-    formData.append('overwrite', 'true');
-    formData.append('invalidate', 'true');
   }
 
   const response = await fetch(

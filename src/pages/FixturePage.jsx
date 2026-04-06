@@ -54,10 +54,23 @@ export default function FixturePage() {
     return rounds.filter(r => r.round === num);
   }, [rounds, selectedRound]);
 
+  const currentSeason = useMemo(() => seasons.find(s => s.id === seasonId), [seasons, seasonId]);
+
   if (seasonsLoading || matchesLoading || teamsLoading || courtsLoading) return <PageShell><LoadingSpinner /></PageShell>;
 
   return (
     <PageShell title="Fixture">
+      {currentSeason && (
+        <div className="flex items-center gap-3 mb-4">
+          {currentSeason.imageUrl && (
+            <img src={currentSeason.imageUrl} alt={currentSeason.name} className="w-12 h-12 rounded object-cover shrink-0" />
+          )}
+          <h2 className="text-lg font-semibold" style={{ color: 'var(--color-text)' }}>
+            {currentSeason.name}
+          </h2>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <SeasonSelector
           seasons={seasons}
