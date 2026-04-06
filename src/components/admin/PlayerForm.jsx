@@ -4,7 +4,7 @@ import { db } from '../../lib/firebase';
 import { generateToken } from '../../lib/utils';
 import { uploadToCloudinary } from '../../lib/cloudinary';
 import { logAction } from '../../lib/audit';
-import { IconButton, EditIcon, DeleteIcon, LinkIcon, CheckIcon, XIcon } from '../common/Icons';
+import { IconButton, EditIcon, DeleteIcon, LinkIcon, CheckIcon, XIcon, ImageIcon } from '../common/Icons';
 
 function PlayerPhoto({ url, name, size = 36 }) {
   if (!url) {
@@ -58,11 +58,6 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
     setUploading(true);
 
     try {
-      let photoUrl = '';
-      if (photoFile) {
-        photoUrl = await uploadToCloudinary(photoFile, 'players');
-      }
-
       const data = {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
@@ -71,19 +66,26 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
       };
 
       if (editingId) {
-        if (photoUrl) data.photoUrl = photoUrl;
+        if (photoFile) {
+          data.photoUrl = await uploadToCloudinary(photoFile, 'players', editingId);
+          data.photoStatus = 'approved';
+        }
         await updateDoc(doc(db, 'players', editingId), data);
         await logAction(user, 'update', 'players', editingId, `Edito jugador: ${data.firstName} ${data.lastName}`);
       } else {
         const token = generateToken();
         const ref = await addDoc(collection(db, 'players'), {
           ...data,
-          photoUrl,
-          photoStatus: photoUrl ? 'approved' : 'none',
+          photoUrl: '',
+          photoStatus: 'none',
           uploadToken: token,
           active: true,
           createdAt: serverTimestamp(),
         });
+        if (photoFile) {
+          const photoUrl = await uploadToCloudinary(photoFile, 'players', ref.id);
+          await updateDoc(doc(db, 'players', ref.id), { photoUrl, photoStatus: 'approved' });
+        }
         await logAction(user, 'create', 'players', ref.id, `Creo jugador: ${data.firstName} ${data.lastName}`);
       }
       resetForm();
@@ -104,6 +106,12 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
     setPhotoPreview(player.photoUrl || '');
     setEditingId(player.id);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleClearPhoto = async (player) => {
+    if (!window.confirm(`Quitar la foto de ${player.firstName} ${player.lastName}?`)) return;
+    await updateDoc(doc(db, 'players', player.id), { photoUrl: '', photoStatus: 'none' });
+    await logAction(user, 'update', 'players', player.id, `Quito foto de: ${player.firstName} ${player.lastName}`);
   };
 
   const handleDelete = async (player) => {
@@ -294,6 +302,7 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
             {canEdit && (
               <div className="flex gap-1 flex-wrap items-center">
                 <IconButton icon={LinkIcon} label={copiedId === player.id ? 'Copiado!' : 'Link foto'} onClick={() => generateUploadLink(player)} color="var(--color-text-secondary)" />
+                {player.photoUrl && <IconButton icon={ImageIcon} label="Quitar foto" onClick={() => handleClearPhoto(player)} color="var(--color-text-muted)" />}
                 <IconButton icon={EditIcon} label="Editar" onClick={() => handleEdit(player)} />
                 <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => handleDelete(player)} color="var(--color-danger)" />
               </div>

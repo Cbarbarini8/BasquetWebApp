@@ -54,7 +54,7 @@ export default function PlayerPhotoUpload() {
 
     setSaving(true);
     try {
-      const url = await uploadToCloudinary(file, 'players');
+      const url = await uploadToCloudinary(file, 'players', player.id);
       await updateDoc(doc(db, 'players', player.id), {
         pendingPhotoUrl: url,
         photoStatus: 'pending',

@@ -4,7 +4,7 @@ import { db } from '../../lib/firebase';
 import { uploadToCloudinary } from '../../lib/cloudinary';
 import { logAction } from '../../lib/audit';
 import TeamLogo from '../common/TeamLogo';
-import { IconButton, EditIcon, DeleteIcon } from '../common/Icons';
+import { IconButton, EditIcon, DeleteIcon, ImageIcon } from '../common/Icons';
 
 export default function TeamForm({ teams, canEdit, user }) {
   const [name, setName] = useState('');
@@ -37,23 +37,24 @@ export default function TeamForm({ teams, canEdit, user }) {
     setUploading(true);
 
     try {
-      let logoUrl;
-      if (logoFile) {
-        logoUrl = await uploadToCloudinary(logoFile, 'teams');
-      }
-
       const data = {
         name: name.trim(),
         shortName: shortName.trim().toUpperCase() || name.trim().substring(0, 3).toUpperCase(),
       };
 
       if (editingId) {
-        if (logoUrl) data.logoUrl = logoUrl;
+        if (logoFile) {
+          data.logoUrl = await uploadToCloudinary(logoFile, 'teams', editingId);
+        }
         await updateDoc(doc(db, 'teams', editingId), data);
         await logAction(user, 'update', 'teams', editingId, `Edito equipo: ${data.name}`);
       } else {
-        data.logoUrl = logoUrl || '';
+        data.logoUrl = '';
         const ref = await addDoc(collection(db, 'teams'), { ...data, createdAt: serverTimestamp() });
+        if (logoFile) {
+          const logoUrl = await uploadToCloudinary(logoFile, 'teams', ref.id);
+          await updateDoc(doc(db, 'teams', ref.id), { logoUrl });
+        }
         await logAction(user, 'create', 'teams', ref.id, `Creo equipo: ${data.name}`);
       }
       resetForm();
@@ -72,6 +73,12 @@ export default function TeamForm({ teams, canEdit, user }) {
     setLogoPreview(team.logoUrl || '');
     setEditingId(team.id);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleClearLogo = async (team) => {
+    if (!window.confirm(`Quitar el logo de ${team.name}?`)) return;
+    await updateDoc(doc(db, 'teams', team.id), { logoUrl: '' });
+    await logAction(user, 'update', 'teams', team.id, `Quito logo de: ${team.name}`);
   };
 
   const handleDelete = async (team) => {
@@ -158,6 +165,7 @@ export default function TeamForm({ teams, canEdit, user }) {
             </div>
             {canEdit && (
               <div className="flex gap-1">
+                {team.logoUrl && <IconButton icon={ImageIcon} label="Quitar logo" onClick={() => handleClearLogo(team)} color="var(--color-text-muted)" />}
                 <IconButton icon={EditIcon} label="Editar" onClick={() => handleEdit(team)} />
                 <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => handleDelete(team)} color="var(--color-danger)" />
               </div>
