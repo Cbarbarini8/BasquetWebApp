@@ -1,6 +1,6 @@
-import { orderBy } from 'firebase/firestore';
 import { useCollection } from './useCollection';
 
 export function usePosts() {
-  return useCollection('posts', [orderBy('createdAt', 'desc')]);
+  // No orderBy constraint - sorting handled client-side to support posts without 'order' field
+  return useCollection('posts');
 }

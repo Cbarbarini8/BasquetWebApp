@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { usePosts } from '../hooks/usePosts';
 import PageShell from '../components/layout/PageShell';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -30,7 +30,8 @@ function InstagramEmbed({ url }) {
 }
 
 export default function GalleryPage() {
-  const { data: posts, loading } = usePosts();
+  const { data: rawPosts, loading } = usePosts();
+  const posts = useMemo(() => [...rawPosts].sort((a, b) => (a.order ?? 999) - (b.order ?? 999)), [rawPosts]);
 
   useEffect(() => {
     if (!document.getElementById('instagram-embed-script')) {
