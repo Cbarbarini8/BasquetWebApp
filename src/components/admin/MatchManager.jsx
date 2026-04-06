@@ -46,6 +46,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [addPlayerSide, setAddPlayerSide] = useState('');
   const [addPlayerId, setAddPlayerId] = useState('');
+  const [addQuarter, setAddQuarter] = useState(1);
   const [addEventType, setAddEventType] = useState('');
 
   useEffect(() => {
@@ -88,7 +89,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
       type: evtDef.type,
       playerId: addPlayerId,
       teamId,
-      quarter: 1,
+      quarter: addQuarter,
       timestamp: serverTimestamp(),
     };
     if (evtDef.made !== undefined) eventData.made = evtDef.made;
@@ -238,6 +239,14 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
                   <option key={p.id} value={p.id}>#{p.number} {p.firstName} {p.lastName}</option>
                 ))}
               </select>
+              <select value={addQuarter} onChange={e => setAddQuarter(parseInt(e.target.value))}
+                className="px-2 py-1.5 rounded-md text-xs" style={inputStyle}>
+                <option value={1}>Q1</option>
+                <option value={2}>Q2</option>
+                <option value={3}>Q3</option>
+                <option value={4}>Q4</option>
+                <option value={5}>OT</option>
+              </select>
             </div>
             {addPlayerId && (
               <div className="flex flex-wrap gap-1">
@@ -276,7 +285,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
                           className="text-xs px-1.5 py-0.5 rounded"
                           style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
                           title="Click para eliminar">
-                          {getEventLabel(evt)} x
+                          {getEventLabel(evt)} Q{evt.quarter || 1} x
                         </button>
                       ))}
                     </div>
@@ -299,7 +308,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
                           className="text-xs px-1.5 py-0.5 rounded"
                           style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
                           title="Click para eliminar">
-                          {getEventLabel(evt)} x
+                          {getEventLabel(evt)} Q{evt.quarter || 1} x
                         </button>
                       ))}
                     </div>
