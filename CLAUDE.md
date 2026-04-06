@@ -45,17 +45,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Scoring: `2pt`, `3pt`, `ft` (with `made: true/false`)
 Other: `foul`, `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
 
+### Routes (in `App.jsx`)
+- `/` — Fixture (home), `/standings`, `/stats`, `/gallery` — Public pages
+- `/match/:matchId` — Public match detail with live updates
+- `/jugador/foto/:token` — Player self-service photo upload (no auth, token-based)
+- `/admin/login` — Admin login page
+- `/admin` — Admin dashboard (protected, tabbed: Temporadas/Equipos/Jugadores/Canchas/Fixture/Partidos/Instagram/Usuarios/Auditoria)
+- `/admin/match/:matchId` — Live scoring page (protected)
+
+### Provider Hierarchy
+`BrowserRouter` → `ThemeProvider` → `AuthProvider` → routes. `useAuth()` returns `{ user, userDoc, loading, isOwner, isActive, canView, canEdit, login, logout }` — `canView(section)` / `canEdit(section)` check permission strings like 'teams', 'matches', etc.
+
 ### Key Patterns
 - `src/hooks/useCollection.js` — Generic real-time Firestore hook; all data hooks build on it
 - `src/hooks/useUserRole.js` — Role/permissions hook for current user
 - `src/lib/calculations.js` — Pure functions for standings and player stats computation
-- `src/lib/audit.js` — `logAction()` writes to auditLog collection (ALL writes must be audited)
+- `src/lib/audit.js` — `logAction(user, action, collection, documentId, description, details)` writes to auditLog (ALL writes must be audited)
 - `src/lib/cloudinary.js` — Upload with folder and publicId (uses entity ID to overwrite, not duplicate)
 - `src/lib/utils.js` — normalizeDriveUrl, generateToken
 - Theme system uses CSS variables on `:root` with `data-theme` attribute (3 themes: blue, orange, dark)
 - Admin routes protected via `ProtectedRoute` component + Firebase Auth + users collection
 - All styles use CSS variables (`var(--color-*)`) for theme support — avoid hardcoded colors
 - Action buttons in admin use SVG icons with tooltips (see `src/components/common/Icons.jsx`)
+- Common UI: `PageShell` (layout wrapper with title), `SeasonSelector`, `TeamLogo`, `LoadingSpinner`, `EmptyState`, `LiveBadge`
 
 ### Roles & Permissions
 - **Owner**: full access + Users/Audit tabs

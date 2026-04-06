@@ -17,10 +17,12 @@ export async function uploadToCloudinary(file, folder = '', publicId = '') {
     { method: 'POST', body: formData }
   );
 
+  const data = await response.json();
+
   if (!response.ok) {
-    throw new Error('Error al subir imagen');
+    console.error('Cloudinary error:', data);
+    throw new Error(data?.error?.message || 'Error al subir imagen');
   }
 
-  const data = await response.json();
   return data.secure_url;
 }
