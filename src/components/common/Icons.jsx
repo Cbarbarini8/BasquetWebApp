@@ -15,6 +15,7 @@ export const ToggleOnIcon = (p) => <svg {...S} {...p}><rect x="1" y="5" width="2
 export const ToggleOffIcon = (p) => <svg {...S} {...p}><rect x="1" y="5" width="22" height="14" rx="7" /><circle cx="8" cy="12" r="3" /></svg>;
 export const ChartIcon = (p) => <svg {...S} {...p}><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>;
 export const PlusIcon = (p) => <svg {...S} {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>;
+export const CopyIcon = (p) => <svg {...S} {...p}><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>;
 export const ImageIcon = (p) => <svg {...S} {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></svg>;
 
 export function IconButton({ icon: Icon, label, onClick, color = 'var(--color-primary)', border = true, ...rest }) {

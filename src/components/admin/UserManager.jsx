@@ -4,7 +4,7 @@ import { db } from '../../lib/firebase';
 import { useCollection } from '../../hooks/useCollection';
 import { logAction } from '../../lib/audit';
 import { orderBy } from 'firebase/firestore';
-import { IconButton, ShieldIcon, ToggleOnIcon, ToggleOffIcon } from '../common/Icons';
+import { IconButton, ShieldIcon, ToggleOnIcon, ToggleOffIcon, CopyIcon } from '../common/Icons';
 
 const SECTION_LABELS = {
   seasons: 'Temporadas',
@@ -83,6 +83,11 @@ export default function UserManager({ currentUser }) {
     setDisplayName(user.displayName || '');
     setPermissions(user.permissions || {});
     setEditingId(user.id);
+  };
+
+  const handleClone = (user) => {
+    resetForm();
+    setPermissions(user.permissions || {});
   };
 
   const toggleActive = async (user) => {
@@ -172,6 +177,7 @@ export default function UserManager({ currentUser }) {
               </div>
               {u.role !== 'owner' && (
                 <div className="flex gap-1">
+                  <IconButton icon={CopyIcon} label="Clonar permisos" onClick={() => handleClone(u)} color="var(--color-text-secondary)" />
                   <IconButton icon={ShieldIcon} label="Permisos" onClick={() => handleEdit(u)} />
                   <IconButton icon={u.active ? ToggleOffIcon : ToggleOnIcon} label={u.active ? 'Desactivar' : 'Activar'} onClick={() => toggleActive(u)} color={u.active ? 'var(--color-danger)' : 'var(--color-success)'} />
                 </div>

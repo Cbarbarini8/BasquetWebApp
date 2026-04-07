@@ -44,6 +44,7 @@ export default function AdminDashboard() {
   const visibleTabs = useMemo(() => {
     return ALL_TABS.filter(tab => {
       if (tab.ownerOnly) return isOwner;
+      if (tab.id === 'matches') return canView('matches') || canView('scoring');
       return canView(tab.permission);
     });
   }, [isOwner, canView]);
@@ -123,7 +124,7 @@ export default function AdminDashboard() {
           {currentTab === 'players' && <PlayerForm players={players} teams={teams} canEdit={canEdit('players')} user={user} />}
           {currentTab === 'courts' && <CourtForm courts={courts} canEdit={canEdit('courts')} user={user} />}
           {currentTab === 'fixture' && <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit('fixture')} user={user} />}
-          {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} user={user} />}
+          {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} canScoring={canView('scoring')} user={user} />}
           {currentTab === 'posts' && <PostManager posts={posts} canEdit={canEdit('posts')} user={user} />}
           {currentTab === 'users' && isOwner && <UserManager currentUser={user} />}
           {currentTab === 'audit' && isOwner && <AuditLog />}

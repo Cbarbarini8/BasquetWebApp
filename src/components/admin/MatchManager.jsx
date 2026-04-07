@@ -501,7 +501,7 @@ function formatMatchDate(d) {
   return date.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
-export default function MatchManager({ matches, teamsMap, teams, players, courts, courtsMap, seasonId, canEdit, user }) {
+export default function MatchManager({ matches, teamsMap, teams, players, courts, courtsMap, seasonId, canEdit, canScoring, user }) {
   const navigate = useNavigate();
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -644,7 +644,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
                             <IconButton icon={PlayIcon} label="Iniciar" onClick={() => startMatch(match.id)} color="var(--color-success)" />
                           </>
                         )}
-                        {match.status === 'live' && (
+                        {match.status === 'live' && (canEdit || canScoring) && (
                           <>
                             <IconButton icon={ClipboardIcon} label="Planilla" onClick={() => navigate(`/admin/match/${match.id}`)} />
                             {canEdit && <IconButton icon={StopIcon} label="Finalizar" onClick={() => finishMatch(match.id)} color="var(--color-warning)" />}
