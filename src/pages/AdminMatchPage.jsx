@@ -5,6 +5,7 @@ import { useDocument } from '../hooks/useDocument';
 import { useMatchEvents } from '../hooks/useMatchEvents';
 import { useTeams } from '../hooks/useTeams';
 import { usePlayers } from '../hooks/usePlayers';
+import { useIsCompactScoring } from '../hooks/useIsCompactScoring';
 import PageShell from '../components/layout/PageShell';
 import LiveScoring from '../components/admin/LiveScoring';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -16,6 +17,7 @@ export default function AdminMatchPage() {
   const { data: events, loading: eventsLoading } = useMatchEvents(matchId);
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: allPlayers, loading: playersLoading } = usePlayers();
+  const compact = useIsCompactScoring();
 
   const { homeTeam, awayTeam, homePlayers, awayPlayers } = useMemo(() => {
     if (!match) return { homeTeam: null, awayTeam: null, homePlayers: [], awayPlayers: [] };
@@ -51,6 +53,28 @@ export default function AdminMatchPage() {
     );
   }
 
+  const scoringNode = (
+    <LiveScoring
+      match={match}
+      events={events}
+      homePlayers={homePlayers}
+      awayPlayers={awayPlayers}
+      homeTeam={homeTeam}
+      awayTeam={awayTeam}
+      canEdit={canEdit('scoring')}
+      user={user}
+      compact={compact}
+    />
+  );
+
+  if (compact) {
+    return (
+      <div className="px-2 py-1">
+        {scoringNode}
+      </div>
+    );
+  }
+
   return (
     <PageShell>
       <div className="mb-4">
@@ -58,16 +82,7 @@ export default function AdminMatchPage() {
           &larr; Volver al admin
         </Link>
       </div>
-      <LiveScoring
-        match={match}
-        events={events}
-        homePlayers={homePlayers}
-        awayPlayers={awayPlayers}
-        homeTeam={homeTeam}
-        awayTeam={awayTeam}
-        canEdit={canEdit('scoring')}
-        user={user}
-      />
+      {scoringNode}
     </PageShell>
   );
 }
