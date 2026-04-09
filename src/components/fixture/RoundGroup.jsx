@@ -14,7 +14,7 @@ function formatDayHeader(dateKey) {
   return date.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
-export default function RoundGroup({ round, matches, teamsMap, courtsMap }) {
+export default function RoundGroup({ round, matches, teamsMap, courtsMap, ascending = false }) {
   const dayGroups = useMemo(() => {
     const groups = {};
 
@@ -24,23 +24,23 @@ export default function RoundGroup({ round, matches, teamsMap, courtsMap }) {
       groups[key].push(match);
     });
 
-    // Sort date keys: real dates first (sorted asc), then __none__ at the end
+    // Sort date keys: real dates by chronological order (asc o desc), __none__ al final
     const sortedKeys = Object.keys(groups).sort((a, b) => {
       if (a === '__none__') return 1;
       if (b === '__none__') return -1;
-      return b.localeCompare(a);
+      return ascending ? a.localeCompare(b) : b.localeCompare(a);
     });
 
     return sortedKeys.map(key => ({
       dateKey: key,
       label: formatDayHeader(key === '__none__' ? null : key),
-      matches: groups[key].sort((a, b) => {
-        const timeA = a.scheduledTime || '99:99';
-        const timeB = b.scheduledTime || '99:99';
-        return timeB.localeCompare(timeA);
+      matches: [...groups[key]].sort((a, b) => {
+        const ta = a.scheduledTime || '99:99';
+        const tb = b.scheduledTime || '99:99';
+        return ascending ? ta.localeCompare(tb) : tb.localeCompare(ta);
       }),
     }));
-  }, [matches]);
+  }, [matches, ascending]);
 
   const hasMixedDates = dayGroups.length > 1 || (dayGroups.length === 1 && dayGroups[0].dateKey !== '__none__');
 

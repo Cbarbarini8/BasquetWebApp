@@ -8,6 +8,7 @@ import RoundGroup from '../components/fixture/RoundGroup';
 import SeasonSelector from '../components/common/SeasonSelector';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import EmptyState from '../components/common/EmptyState';
+import { getMatchProximityToNow } from '../lib/utils';
 
 export default function FixturePage() {
   const { data: seasons, loading: seasonsLoading } = useSeasons();
@@ -32,7 +33,7 @@ export default function FixturePage() {
     return map;
   }, [courts]);
 
-  const { liveMatches, rounds, roundNumbers } = useMemo(() => {
+  const { liveMatches, pendingRounds, completedRounds, roundNumbers } = useMemo(() => {
     const live = matches.filter(m => m.status === 'live');
     const grouped = {};
     matches.forEach(m => {
@@ -41,18 +42,47 @@ export default function FixturePage() {
       grouped[r].push(m);
     });
     const nums = Object.keys(grouped).map(Number).sort((a, b) => b - a);
+    const pending = [];
+    const completed = [];
+    nums.forEach(r => {
+      const roundMatches = grouped[r];
+      const allFinished = roundMatches.every(m => m.status === 'finished');
+      const entry = { round: r, matches: roundMatches };
+      if (allFinished) completed.push(entry);
+      else pending.push(entry);
+    });
+
+    // Ordenar pendientes por proximidad a hoy: la fecha con el partido mas cercano primero
+    const now = Date.now();
+    const getRoundProximity = (roundMatches) => {
+      let minDistance = Infinity;
+      roundMatches.forEach(m => {
+        const d = getMatchProximityToNow(m, now);
+        if (d < minDistance) minDistance = d;
+      });
+      return minDistance;
+    };
+    pending.sort((a, b) => getRoundProximity(a.matches) - getRoundProximity(b.matches));
+
     return {
       liveMatches: live,
-      rounds: nums.map(r => ({ round: r, matches: grouped[r] })),
+      pendingRounds: pending,
+      completedRounds: completed,
       roundNumbers: nums,
     };
   }, [matches]);
 
-  const filteredRounds = useMemo(() => {
-    if (selectedRound === 'all') return rounds;
+  const filteredPending = useMemo(() => {
+    if (selectedRound === 'all') return pendingRounds;
     const num = parseInt(selectedRound);
-    return rounds.filter(r => r.round === num);
-  }, [rounds, selectedRound]);
+    return pendingRounds.filter(r => r.round === num);
+  }, [pendingRounds, selectedRound]);
+
+  const filteredCompleted = useMemo(() => {
+    if (selectedRound === 'all') return completedRounds;
+    const num = parseInt(selectedRound);
+    return completedRounds.filter(r => r.round === num);
+  }, [completedRounds, selectedRound]);
 
   const currentSeason = useMemo(() => seasons.find(s => s.id === seasonId), [seasons, seasonId]);
 
@@ -125,15 +155,39 @@ export default function FixturePage() {
             </div>
           )}
 
-          {filteredRounds.map(({ round, matches: roundMatches }) => (
+          {filteredPending.map(({ round, matches: roundMatches }) => (
             <RoundGroup
-              key={round}
+              key={`pending-${round}`}
               round={round}
               matches={roundMatches}
               teamsMap={teamsMap}
               courtsMap={courtsMap}
+              ascending
             />
           ))}
+
+          {filteredCompleted.length > 0 && (
+            <>
+              <h2
+                className="text-xs font-bold uppercase tracking-widest mt-8 mb-4 pb-2 px-1"
+                style={{
+                  color: 'var(--color-text-muted)',
+                  borderBottom: '1px solid var(--color-border)',
+                }}
+              >
+                Fechas completadas
+              </h2>
+              {filteredCompleted.map(({ round, matches: roundMatches }) => (
+                <RoundGroup
+                  key={`completed-${round}`}
+                  round={round}
+                  matches={roundMatches}
+                  teamsMap={teamsMap}
+                  courtsMap={courtsMap}
+                />
+              ))}
+            </>
+          )}
         </>
       )}
     </PageShell>
