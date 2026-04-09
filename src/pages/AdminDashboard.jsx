@@ -11,6 +11,7 @@ import TeamForm from '../components/admin/TeamForm';
 import PlayerForm from '../components/admin/PlayerForm';
 import FixtureGenerator from '../components/admin/FixtureGenerator';
 import MatchManager from '../components/admin/MatchManager';
+import ScoringToday from '../components/admin/ScoringToday';
 import SeasonForm from '../components/admin/SeasonForm';
 import CourtForm from '../components/admin/CourtForm';
 import PostManager from '../components/admin/PostManager';
@@ -25,6 +26,7 @@ const ALL_TABS = [
   { id: 'courts', label: 'Canchas', permission: 'courts' },
   { id: 'fixture', label: 'Fixture', permission: 'fixture' },
   { id: 'matches', label: 'Partidos', permission: 'matches' },
+  { id: 'scoring', label: 'Planilla en vivo', permission: 'scoring' },
   { id: 'posts', label: 'Instagram', permission: 'posts' },
   { id: 'users', label: 'Usuarios', ownerOnly: true },
   { id: 'audit', label: 'Auditoria', ownerOnly: true },
@@ -125,6 +127,7 @@ export default function AdminDashboard() {
           {currentTab === 'courts' && <CourtForm courts={courts} canEdit={canEdit('courts')} user={user} />}
           {currentTab === 'fixture' && <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit('fixture')} user={user} />}
           {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} canScoring={canView('scoring')} user={user} />}
+          {currentTab === 'scoring' && <ScoringToday matches={matches} teamsMap={teamsMap} courtsMap={courtsMap} canEdit={canEdit('scoring')} user={user} />}
           {currentTab === 'posts' && <PostManager posts={posts} canEdit={canEdit('posts')} user={user} />}
           {currentTab === 'users' && isOwner && <UserManager currentUser={user} />}
           {currentTab === 'audit' && isOwner && <AuditLog />}

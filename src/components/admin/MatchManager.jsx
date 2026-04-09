@@ -3,6 +3,7 @@ import { collection, addDoc, doc, updateDoc, deleteDoc, getDocs, serverTimestamp
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../lib/firebase';
 import { logAction } from '../../lib/audit';
+import { getMatchProximityToNow } from '../../lib/utils';
 import { IconButton, EditIcon, DeleteIcon, PlayIcon, StopIcon, CalendarIcon, ClipboardIcon, UndoIcon } from '../common/Icons';
 
 const EVENT_TYPES = [
@@ -535,16 +536,22 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
   };
 
   const resetMatch = async (matchId) => {
-    if (!window.confirm('Resetear este partido a programado?')) return;
-    await updateDoc(doc(db, 'matches', matchId), {
+    if (!window.confirm('Resetear este partido a programado? Se eliminaran todas las estadisticas cargadas.')) return;
+    const eventsSnap = await getDocs(collection(db, `matches/${matchId}/events`));
+    const batch = writeBatch(db);
+    eventsSnap.docs.forEach(d => batch.delete(d.ref));
+    batch.update(doc(db, 'matches', matchId), {
       status: 'scheduled',
       homeScore: 0,
       awayScore: 0,
       quarter: 0,
       startedAt: null,
       finishedAt: null,
+      onCourtHome: [],
+      onCourtAway: [],
     });
-    await logAction(user, 'reset', 'matches', matchId, `Reseteo partido: ${getMatchLabel(matchId)}`);
+    await batch.commit();
+    await logAction(user, 'reset', 'matches', matchId, `Reseteo partido: ${getMatchLabel(matchId)} (${eventsSnap.size} eventos eliminados)`);
   };
 
   const deleteMatch = async (matchId) => {
@@ -567,9 +574,31 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     if (!groupedByRound[r]) groupedByRound[r] = [];
     groupedByRound[r].push(m);
   });
-  Object.values(groupedByRound).forEach(arr => arr.sort((a, b) => getMatchSortValue(b) - getMatchSortValue(a)));
 
   const roundNumbers = Object.keys(groupedByRound).map(Number).sort((a, b) => b - a);
+  const pendingRoundNumbers = roundNumbers.filter(r => groupedByRound[r].some(m => m.status !== 'finished'));
+  const completedRoundNumbers = roundNumbers.filter(r => groupedByRound[r].every(m => m.status === 'finished'));
+
+  // Pendientes: orden cronologico ascendente (fecha+hora menor a mayor)
+  const now = Date.now();
+  pendingRoundNumbers.forEach(r => {
+    groupedByRound[r].sort((a, b) => getMatchSortValue(a) - getMatchSortValue(b));
+  });
+  // Completadas: orden cronologico descendente (fecha+hora mayor a menor)
+  completedRoundNumbers.forEach(r => {
+    groupedByRound[r].sort((a, b) => getMatchSortValue(b) - getMatchSortValue(a));
+  });
+
+  // Encabezados de fechas pendientes ordenados por la proximidad de su partido mas cercano
+  const getRoundProximity = (round) => {
+    let minDistance = Infinity;
+    groupedByRound[round].forEach(m => {
+      const d = getMatchProximityToNow(m, now);
+      if (d < minDistance) minDistance = d;
+    });
+    return minDistance;
+  };
+  pendingRoundNumbers.sort((a, b) => getRoundProximity(a) - getRoundProximity(b));
 
   return (
     <div>
@@ -591,94 +620,115 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       ))}
 
       <div className="space-y-6">
-        {roundNumbers.map(round => (
-          <div key={round}>
-            <h3 className="text-sm font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--color-primary)' }}>
-              Fecha {round}
-            </h3>
-            <div className="space-y-2">
-              {groupedByRound[round].map(match => {
-                const home = teamsMap[match.homeTeamId]?.name || 'TBD';
-                const away = teamsMap[match.awayTeamId]?.name || 'TBD';
-                const court = match.courtId ? courtsMap?.[match.courtId] : null;
-                const dateStr = formatMatchDate(match.scheduledDate);
-                const scheduleLabel = dateStr
-                  ? `${dateStr} ${match.scheduledTime || ''}`
-                  : 'Sin fecha asignada';
+        {pendingRoundNumbers.map(round => renderRound(round))}
 
-                return (
-                  <div key={match.id}>
-                    <div
-                      className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 rounded-md"
-                      style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
-                    >
-                      <div className="flex items-center gap-3 flex-wrap">
-                        <span className="font-medium text-sm" style={{ color: 'var(--color-text)' }}>
-                          {home} vs {away}
-                        </span>
-                        {court && (
-                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                            {court.name}
-                          </span>
-                        )}
-                        {match.status === 'live' && (
-                          <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: 'var(--color-live)' }}>
-                            EN VIVO {match.homeScore}-{match.awayScore}
-                          </span>
-                        )}
-                        {match.status === 'finished' && (
-                          <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                            Final: {match.homeScore}-{match.awayScore}
-                          </span>
-                        )}
-                        {match.status === 'scheduled' && (
-                          <span className="text-xs" style={{ color: dateStr ? 'var(--color-text-muted)' : 'var(--color-warning)' }}>
-                            {scheduleLabel}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex gap-1 flex-wrap items-center">
-                        {canEdit && match.status === 'scheduled' && (
-                          <>
-                            <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
-                            <IconButton icon={PlayIcon} label="Iniciar" onClick={() => startMatch(match.id)} color="var(--color-success)" />
-                          </>
-                        )}
-                        {match.status === 'live' && (canEdit || canScoring) && (
-                          <>
-                            <IconButton icon={ClipboardIcon} label="Planilla" onClick={() => navigate(`/admin/match/${match.id}`)} />
-                            {canEdit && <IconButton icon={StopIcon} label="Finalizar" onClick={() => finishMatch(match.id)} color="var(--color-warning)" />}
-                          </>
-                        )}
-                        {canEdit && match.status === 'finished' && (
-                          <IconButton icon={EditIcon} label={editingId === match.id ? 'Cerrar' : 'Editar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
-                        )}
-                        {canEdit && match.status !== 'finished' && (
-                          <IconButton icon={UndoIcon} label="Reset" onClick={() => resetMatch(match.id)} color="var(--color-text-muted)" />
-                        )}
-                        {canEdit && (
-                          <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => deleteMatch(match.id)} color="var(--color-danger)" />
-                        )}
-                      </div>
-                    </div>
-
-                    {editingId === match.id && (
-                      <MatchEditor
-                        match={match}
-                        teamsMap={teamsMap}
-                        courts={courts || []}
-                        allPlayers={players || []}
-                        user={user}
-                        onClose={() => setEditingId(null)}
-                      />
-                    )}
-                  </div>
-                );
-              })}
+        {completedRoundNumbers.length > 0 && (
+          <div>
+            <h2
+              className="text-xs font-bold uppercase tracking-widest mt-2 mb-4 pb-2"
+              style={{
+                color: 'var(--color-text-muted)',
+                borderBottom: '1px solid var(--color-border)',
+              }}
+            >
+              Fechas completadas
+            </h2>
+            <div className="space-y-6">
+              {completedRoundNumbers.map(round => renderRound(round))}
             </div>
           </div>
-        ))}
+        )}
       </div>
     </div>
   );
+
+  function renderRound(round) {
+    return (
+      <div key={round}>
+        <h3 className="text-sm font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--color-primary)' }}>
+          Fecha {round}
+        </h3>
+        <div className="space-y-2">
+          {groupedByRound[round].map(match => {
+            const home = teamsMap[match.homeTeamId]?.name || 'TBD';
+            const away = teamsMap[match.awayTeamId]?.name || 'TBD';
+            const court = match.courtId ? courtsMap?.[match.courtId] : null;
+            const dateStr = formatMatchDate(match.scheduledDate);
+            const scheduleLabel = dateStr
+              ? `${dateStr} ${match.scheduledTime || ''}`
+              : 'Sin fecha asignada';
+
+            return (
+              <div key={match.id}>
+                <div
+                  className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 rounded-md"
+                  style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)' }}
+                >
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="font-medium text-sm" style={{ color: 'var(--color-text)' }}>
+                      {home} vs {away}
+                    </span>
+                    {court && (
+                      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        {court.name}
+                      </span>
+                    )}
+                    {match.status === 'live' && (
+                      <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ backgroundColor: 'var(--color-live)' }}>
+                        EN VIVO {match.homeScore}-{match.awayScore}
+                      </span>
+                    )}
+                    {match.status === 'finished' && (
+                      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        Final: {match.homeScore}-{match.awayScore}
+                      </span>
+                    )}
+                    {match.status === 'scheduled' && (
+                      <span className="text-xs" style={{ color: dateStr ? 'var(--color-text-muted)' : 'var(--color-warning)' }}>
+                        {scheduleLabel}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex gap-1 flex-wrap items-center">
+                    {canEdit && match.status === 'scheduled' && (
+                      <>
+                        <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
+                        <IconButton icon={PlayIcon} label="Iniciar" onClick={() => startMatch(match.id)} color="var(--color-success)" />
+                      </>
+                    )}
+                    {match.status === 'live' && (canEdit || canScoring) && (
+                      <>
+                        <IconButton icon={ClipboardIcon} label="Planilla" onClick={() => navigate(`/admin/match/${match.id}`)} />
+                        {canEdit && <IconButton icon={StopIcon} label="Finalizar" onClick={() => finishMatch(match.id)} color="var(--color-warning)" />}
+                      </>
+                    )}
+                    {canEdit && match.status === 'finished' && (
+                      <IconButton icon={EditIcon} label={editingId === match.id ? 'Cerrar' : 'Editar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
+                    )}
+                    {canEdit && match.status !== 'finished' && (
+                      <IconButton icon={UndoIcon} label="Reset" onClick={() => resetMatch(match.id)} color="var(--color-text-muted)" />
+                    )}
+                    {canEdit && (
+                      <IconButton icon={DeleteIcon} label="Eliminar" onClick={() => deleteMatch(match.id)} color="var(--color-danger)" />
+                    )}
+                  </div>
+                </div>
+
+                {editingId === match.id && (
+                  <MatchEditor
+                    match={match}
+                    teamsMap={teamsMap}
+                    courts={courts || []}
+                    allPlayers={players || []}
+                    user={user}
+                    onClose={() => setEditingId(null)}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 }
