@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { collection, doc, updateDoc, writeBatch, increment, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
-import { logAction } from '../../lib/audit';
+import { logStatsParticipation } from '../../lib/audit';
+import { useToast } from '../../context/ToastContext';
+import { useMatchClock, defaultQuarterMs, pausedRemainingFromMatch, formatClock } from '../../hooks/useMatchClock';
 
 const EVENT_BUTTONS = [
   { type: '2pt', label: '+2', made: true, points: 2, color: 'var(--color-success)' },
@@ -35,7 +37,7 @@ const EVENT_LABELS = {
 
 const MAX_ON_COURT = 5;
 
-function PlayerJersey({ player, selected, onClick, compact = false }) {
+function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0 }) {
   return (
     <button
       type="button"
@@ -50,6 +52,21 @@ function PlayerJersey({ player, selected, onClick, compact = false }) {
         minHeight: compact ? '38px' : '64px',
       }}
     >
+      {fouls > 0 && (
+        <span
+          className={`absolute font-bold rounded-full flex items-center justify-center ${
+            compact ? 'top-0 right-0 text-[9px] w-3.5 h-3.5' : 'top-0.5 right-0.5 text-[10px] w-4 h-4'
+          }`}
+          style={{
+            backgroundColor: fouls >= 5 ? 'var(--color-danger)' : fouls >= 4 ? '#f59e0b' : 'var(--color-danger)',
+            color: '#ffffff',
+            opacity: fouls >= 4 ? 1 : 0.85,
+          }}
+          title={`${fouls} falta${fouls !== 1 ? 's' : ''}`}
+        >
+          {fouls}
+        </span>
+      )}
       <span className={`font-bold leading-none ${compact ? 'text-base' : 'text-2xl'}`}>
         #{player.number}
       </span>
@@ -63,8 +80,28 @@ function PlayerJersey({ player, selected, onClick, compact = false }) {
 }
 
 export default function LiveScoring({ match, events, homePlayers, awayPlayers, homeTeam, awayTeam, canEdit = true, user, compact = false }) {
+  const { toast } = useToast();
   const [selectedPlayer, setSelectedPlayer] = useState({ home: '', away: '' });
   const [editingCourt, setEditingCourt] = useState({ home: false, away: false });
+  const [editingClock, setEditingClock] = useState(false);
+  const [clockInput, setClockInput] = useState('');
+  const { mmss, remainingMs, running } = useMatchClock(match);
+  const autoStoppedRef = useRef(false);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    if (running && remainingMs <= 0 && !autoStoppedRef.current) {
+      autoStoppedRef.current = true;
+      updateDoc(doc(db, 'matches', match.id), {
+        clockRunning: false,
+        clockRemainingMs: 0,
+        clockStartedAt: null,
+      }).then(() => {
+        toast.warning(`Fin del cuarto Q${match.quarter || 1}`);
+      });
+    }
+    if (!running || remainingMs > 0) autoStoppedRef.current = false;
+  }, [running, remainingMs, canEdit, match.id, match.quarter, toast]);
 
   const allPlayers = [...homePlayers, ...awayPlayers];
   const getPlayerLabel = (id) => {
@@ -74,6 +111,30 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
 
   const onCourtHomeIds = match.onCourtHome || [];
   const onCourtAwayIds = match.onCourtAway || [];
+  const currentQuarter = match.quarter || 1;
+
+  const playerFouls = useMemo(() => {
+    const map = {};
+    events.forEach(e => {
+      if (e.type === 'foul') map[e.playerId] = (map[e.playerId] || 0) + 1;
+    });
+    return map;
+  }, [events]);
+
+  const teamFoulsQ = (teamId) =>
+    events.filter(e => e.type === 'foul' && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
+
+  const homeTeamFouls = teamFoulsQ(match.homeTeamId);
+  const awayTeamFouls = teamFoulsQ(match.awayTeamId);
+
+  const toggleTimeout = async (side) => {
+    if (!canEdit) return;
+    const current = !!(match.timeouts?.[side]?.[currentQuarter]);
+    await updateDoc(doc(db, 'matches', match.id), {
+      [`timeouts.${side}.${currentQuarter}`]: !current,
+    });
+    if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
+  };
 
   const onCourtHomePlayers = homePlayers.filter(p => onCourtHomeIds.includes(p.id));
   const onCourtAwayPlayers = awayPlayers.filter(p => onCourtAwayIds.includes(p.id));
@@ -82,8 +143,12 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     const field = side === 'home' ? 'onCourtHome' : 'onCourtAway';
     const currentIds = side === 'home' ? onCourtHomeIds : onCourtAwayIds;
     const isOn = currentIds.includes(playerId);
+    if (!isOn && (playerFouls[playerId] || 0) >= 5) {
+      toast.error('Este jugador esta expulsado (5 faltas) y no puede volver a la cancha.');
+      return;
+    }
     if (!isOn && currentIds.length >= MAX_ON_COURT) {
-      alert(`Maximo ${MAX_ON_COURT} jugadores en cancha. Sacar uno primero.`);
+      toast.warning(`Maximo ${MAX_ON_COURT} jugadores en cancha. Sacar uno primero.`);
       return;
     }
     await updateDoc(doc(db, 'matches', match.id), {
@@ -94,7 +159,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   const addEvent = async (side, eventDef) => {
     const playerId = selectedPlayer[side];
     if (!playerId) {
-      alert('Selecciona un jugador primero');
+      toast.info('Selecciona un jugador primero');
       return;
     }
 
@@ -123,8 +188,23 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       batch.update(matchRef, { [scoreField]: increment(eventDef.points) });
     }
 
+    // Si este evento hace llegar al jugador a 5 faltas, sacarlo de cancha y abrir seleccion de reemplazo
+    const willReachFiveFouls = eventDef.type === 'foul' && (playerFouls[playerId] || 0) + 1 >= 5;
+    if (willReachFiveFouls) {
+      const courtField = side === 'home' ? 'onCourtHome' : 'onCourtAway';
+      batch.update(doc(db, 'matches', match.id), { [courtField]: arrayRemove(playerId) });
+    }
+
     await batch.commit();
-    if (user) await logAction(user, 'create', 'matchEvents', match.id, `Evento ${eventDef.label}: ${getPlayerLabel(playerId)}`);
+
+    if (willReachFiveFouls) {
+      const label = getPlayerLabel(playerId);
+      setSelectedPlayer(prev => ({ ...prev, [side]: '' }));
+      setEditingCourt(prev => ({ ...prev, [side]: true }));
+      toast.error(`${label} llego a 5 faltas. Debe ser reemplazado.`, 6000);
+    }
+
+    if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
   };
 
   const undoEvent = async (event) => {
@@ -142,12 +222,70 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     }
 
     await batch.commit();
-    if (user) await logAction(user, 'delete', 'matchEvents', match.id, `Deshizo evento: ${getPlayerLabel(event.playerId)}`);
+    if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
   };
 
   const updateQuarter = async (q) => {
-    await updateDoc(doc(db, 'matches', match.id), { quarter: q });
-    if (user) await logAction(user, 'update', 'matches', match.id, `Cambio cuarto a Q${q}`);
+    await updateDoc(doc(db, 'matches', match.id), {
+      quarter: q,
+      clockRunning: false,
+      clockRemainingMs: defaultQuarterMs(q),
+      clockStartedAt: null,
+    });
+    if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
+  };
+
+  const toggleClock = async () => {
+    if (!canEdit) return;
+    if (running) {
+      const remaining = pausedRemainingFromMatch(match);
+      await updateDoc(doc(db, 'matches', match.id), {
+        clockRunning: false,
+        clockRemainingMs: remaining,
+        clockStartedAt: null,
+      });
+    } else {
+      const base = typeof match.clockRemainingMs === 'number' ? match.clockRemainingMs : defaultQuarterMs(match.quarter || 1);
+      if (base <= 0) {
+        toast.info('El reloj esta en 00:00. Modificalo antes de iniciar.');
+        return;
+      }
+      await updateDoc(doc(db, 'matches', match.id), {
+        clockRunning: true,
+        clockRemainingMs: base,
+        clockStartedAt: Date.now(),
+      });
+    }
+  };
+
+  const openClockEdit = () => {
+    if (!canEdit) return;
+    const base = pausedRemainingFromMatch(match);
+    setClockInput(formatClock(base));
+    setEditingClock(true);
+  };
+
+  const saveClockEdit = async () => {
+    const match1 = clockInput.match(/^(\d{1,2}):(\d{2})$/);
+    const match2 = clockInput.match(/^(\d{1,3})$/);
+    let ms;
+    if (match1) {
+      const mm = parseInt(match1[1]);
+      const ss = parseInt(match1[2]);
+      if (ss >= 60) { toast.error('Segundos invalidos'); return; }
+      ms = (mm * 60 + ss) * 1000;
+    } else if (match2) {
+      ms = parseInt(match2[1]) * 60 * 1000;
+    } else {
+      toast.error('Formato invalido. Usa MM:SS o solo minutos.');
+      return;
+    }
+    await updateDoc(doc(db, 'matches', match.id), {
+      clockRunning: false,
+      clockRemainingMs: ms,
+      clockStartedAt: null,
+    });
+    setEditingClock(false);
   };
 
   const getEventLabel = (event) => {
@@ -162,6 +300,9 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     const teamPlayers = side === 'home' ? homePlayers : awayPlayers;
     const teamEvents = events.filter(e => e.teamId === (side === 'home' ? match.homeTeamId : match.awayTeamId));
     const lastEvent = teamEvents[0];
+    const teamFouls = side === 'home' ? homeTeamFouls : awayTeamFouls;
+    const timeoutUsed = !!(match.timeouts?.[side]?.[currentQuarter]);
+    const inBonus = teamFouls >= 4;
 
     return (
       <div className={`flex-1 ${compact ? 'min-w-0' : 'min-w-[280px]'}`}>
@@ -182,6 +323,33 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
               {isEditing ? 'Listo' : (compact ? 'Edit' : 'Editar cancha')}
             </button>
           )}
+        </div>
+        <div className={`flex items-center gap-2 ${compact ? 'mb-1 text-[10px]' : 'mb-2 text-xs'}`}>
+          <span
+            className="px-1.5 py-0.5 rounded font-medium"
+            style={{
+              backgroundColor: inBonus ? 'var(--color-danger)' : 'var(--color-bg-hover)',
+              color: inBonus ? '#ffffff' : 'var(--color-text-secondary)',
+              border: inBonus ? 'none' : '1px solid var(--color-border)',
+            }}
+            title={inBonus ? 'En bonus: proxima falta son tiros libres' : `Faltas del equipo en Q${currentQuarter}`}
+          >
+            Faltas {Math.min(teamFouls, 5)}/5
+          </span>
+          <button
+            type="button"
+            onClick={() => toggleTimeout(side)}
+            disabled={!canEdit}
+            className="px-1.5 py-0.5 rounded font-medium disabled:cursor-default"
+            style={{
+              backgroundColor: timeoutUsed ? 'var(--color-primary)' : 'transparent',
+              color: timeoutUsed ? '#ffffff' : 'var(--color-text-secondary)',
+              border: '1px solid var(--color-border)',
+            }}
+            title={`Tiempo muerto Q${currentQuarter} ${timeoutUsed ? '(usado)' : '(disponible)'}`}
+          >
+            {timeoutUsed ? '● TO' : '○ TO'}
+          </button>
         </div>
 
         {/* Modo edicion de cancha */}
@@ -251,6 +419,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                         selected={selected === p.id}
                         onClick={() => setSelectedPlayer(prev => ({ ...prev, [side]: p.id }))}
                         compact
+                        fouls={playerFouls[p.id] || 0}
                       />
                     );
                   })}
@@ -283,6 +452,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     selected={selected === p.id}
                     onClick={() => setSelectedPlayer(prev => ({ ...prev, [side]: p.id }))}
                     compact={compact}
+                    fouls={playerFouls[p.id] || 0}
                   />
                 ))}
               </div>
@@ -368,57 +538,231 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     <div>
       {/* Scoreboard */}
       <div
-        className={`rounded-lg text-center ${compact ? 'p-1.5 mb-1.5' : 'p-4 mb-6'}`}
+        className={`rounded-lg text-center ${compact ? 'p-2 mb-2' : 'p-4 mb-6'}`}
         style={{ backgroundColor: 'var(--color-table-header)', color: '#ffffff' }}
       >
-        <div className={`flex items-center justify-center ${compact ? 'gap-3' : 'gap-6'}`}>
-          {compact && (
+        {compact ? (
+          <div className="flex items-center gap-2">
             <Link
               to="/admin"
-              className="text-[10px] shrink-0 px-1.5 py-0.5 rounded text-white/80"
+              className="shrink-0 w-8 h-8 flex items-center justify-center rounded text-white/85 text-base font-bold"
               style={{ border: '1px solid rgba(255,255,255,0.3)' }}
               title="Volver"
             >
               ←
             </Link>
-          )}
-          <div className="min-w-0">
-            <p className={`font-medium opacity-80 truncate ${compact ? 'text-[10px] leading-none' : 'text-sm'}`}>
-              {homeTeam?.name}
-            </p>
-            <p className={`font-bold leading-none ${compact ? 'text-2xl' : 'text-4xl'}`}>{match.homeScore || 0}</p>
-          </div>
-          <div className="text-center shrink-0">
-            <p className={`opacity-60 leading-none ${compact ? 'text-[9px]' : 'text-sm'}`}>Q{match.quarter || 1}</p>
-            <div className={`flex gap-1 ${compact ? 'mt-0.5' : 'mt-1'}`}>
-              {[1, 2, 3, 4].map(q => (
+
+            {/* Home name + score */}
+            <div className="flex-1 min-w-0 flex items-center justify-end gap-2">
+              <p className="text-xs opacity-85 truncate leading-tight text-right">
+                {homeTeam?.name}
+              </p>
+              <p className="text-3xl font-bold leading-none tabular-nums">{match.homeScore || 0}</p>
+            </div>
+
+            {/* Central: reloj + controles + cuartos */}
+            <div className="shrink-0 flex flex-col items-center gap-1">
+              {editingClock && canEdit ? (
+                <div className="flex items-center gap-1 h-9">
+                  <input
+                    type="text"
+                    value={clockInput}
+                    onChange={e => setClockInput(e.target.value)}
+                    placeholder="MM:SS"
+                    autoFocus
+                    className="rounded text-center font-mono font-bold w-20 text-lg h-9 px-1"
+                    style={{
+                      backgroundColor: '#ffffff',
+                      color: '#111827',
+                      caretColor: '#111827',
+                      colorScheme: 'light',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                    }}
+                  />
+                  <button
+                    onClick={saveClockEdit}
+                    className="h-9 px-2.5 rounded bg-white text-gray-900 font-bold text-xs"
+                    title="Guardar"
+                  >OK</button>
+                  <button
+                    onClick={() => setEditingClock(false)}
+                    className="h-9 w-8 rounded bg-white/20 text-white font-bold text-sm"
+                    title="Cancelar"
+                  >✕</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <span
+                    onDoubleClick={canEdit ? openClockEdit : undefined}
+                    className="h-9 px-3 flex items-center rounded bg-white/10 font-mono font-bold tabular-nums text-2xl leading-none select-none"
+                    style={{
+                      color: remainingMs <= 10000 && remainingMs > 0 ? '#fca5a5' : remainingMs === 0 ? '#ef4444' : '#ffffff',
+                      cursor: canEdit ? 'pointer' : 'default',
+                    }}
+                    title={canEdit ? 'Doble click para editar' : undefined}
+                  >
+                    {mmss}
+                  </span>
+                  {canEdit && (
+                    <>
+                      <button
+                        onClick={toggleClock}
+                        className={`w-9 h-9 rounded font-bold text-sm transition-colors ${
+                          running ? 'bg-white text-gray-900' : 'bg-white/25 text-white'
+                        }`}
+                        title={running ? 'Pausar' : 'Iniciar'}
+                      >
+                        {running ? '❚❚' : '▶'}
+                      </button>
+                      <button
+                        onClick={openClockEdit}
+                        className="w-9 h-9 rounded bg-white/15 text-white font-bold text-sm"
+                        title="Editar tiempo"
+                      >
+                        ✎
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              <div className="flex gap-1">
+                {[1, 2, 3, 4].map(q => (
+                  <button
+                    key={q}
+                    onClick={() => updateQuarter(q)}
+                    disabled={!canEdit}
+                    className={`w-7 h-7 rounded font-bold text-xs transition-colors ${
+                      match.quarter === q ? 'bg-white text-gray-900' : 'bg-white/20 text-white'
+                    }`}
+                  >
+                    {q}
+                  </button>
+                ))}
                 <button
-                  key={q}
-                  onClick={() => updateQuarter(q)}
-                  className={`rounded font-bold transition-colors ${
-                    compact ? 'w-5 h-5 text-[10px]' : 'w-7 h-7 text-xs'
-                  } ${match.quarter === q ? 'bg-white text-gray-900' : 'bg-white/20 text-white'}`}
+                  onClick={() => updateQuarter(5)}
+                  disabled={!canEdit}
+                  className={`w-9 h-7 rounded font-bold text-xs transition-colors ${
+                    match.quarter === 5 ? 'bg-white text-gray-900' : 'bg-white/20 text-white'
+                  }`}
                 >
-                  {q}
+                  OT
                 </button>
-              ))}
-              <button
-                onClick={() => updateQuarter(5)}
-                className={`rounded font-bold transition-colors ${
-                  compact ? 'w-5 h-5 text-[10px]' : 'w-7 h-7 text-xs'
-                } ${match.quarter === 5 ? 'bg-white text-gray-900' : 'bg-white/20 text-white'}`}
-              >
-                OT
-              </button>
+              </div>
+            </div>
+
+            {/* Away score + name */}
+            <div className="flex-1 min-w-0 flex items-center justify-start gap-2">
+              <p className="text-3xl font-bold leading-none tabular-nums">{match.awayScore || 0}</p>
+              <p className="text-xs opacity-85 truncate leading-tight text-left">
+                {awayTeam?.name}
+              </p>
             </div>
           </div>
-          <div className="min-w-0">
-            <p className={`font-medium opacity-80 truncate ${compact ? 'text-[10px] leading-none' : 'text-sm'}`}>
-              {awayTeam?.name}
-            </p>
-            <p className={`font-bold leading-none ${compact ? 'text-2xl' : 'text-4xl'}`}>{match.awayScore || 0}</p>
+        ) : (
+          <div className="flex items-center justify-center gap-6">
+            <div className="min-w-0">
+              <p className="font-medium opacity-80 truncate text-sm">
+                {homeTeam?.name}
+              </p>
+              <p className="font-bold leading-none text-4xl">{match.homeScore || 0}</p>
+            </div>
+            <div className="text-center shrink-0">
+              {editingClock && canEdit ? (
+                <div className="flex items-center gap-1 justify-center">
+                  <input
+                    type="text"
+                    value={clockInput}
+                    onChange={e => setClockInput(e.target.value)}
+                    placeholder="MM:SS"
+                    autoFocus
+                    className="rounded text-center font-mono font-bold w-24 text-lg py-1"
+                    style={{
+                      backgroundColor: '#ffffff',
+                      color: '#111827',
+                      caretColor: '#111827',
+                      colorScheme: 'light',
+                      border: '1px solid rgba(255,255,255,0.4)',
+                    }}
+                  />
+                  <button
+                    onClick={saveClockEdit}
+                    className="rounded bg-white text-gray-900 font-bold px-2 py-1 text-xs"
+                    title="Guardar"
+                  >OK</button>
+                  <button
+                    onClick={() => setEditingClock(false)}
+                    className="rounded bg-white/20 text-white font-bold px-2 py-1 text-xs"
+                    title="Cancelar"
+                  >✕</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 justify-center">
+                  <span
+                    onDoubleClick={canEdit ? openClockEdit : undefined}
+                    className="font-mono font-bold tabular-nums leading-none select-none text-3xl"
+                    style={{
+                      color: remainingMs <= 10000 && remainingMs > 0 ? '#fca5a5' : remainingMs === 0 ? '#ef4444' : '#ffffff',
+                      cursor: canEdit ? 'pointer' : 'default',
+                    }}
+                    title={canEdit ? 'Doble click para editar' : undefined}
+                  >
+                    {mmss}
+                  </span>
+                  {canEdit && (
+                    <>
+                      <button
+                        onClick={toggleClock}
+                        className={`w-8 h-8 rounded font-bold text-sm transition-colors ${
+                          running ? 'bg-white text-gray-900' : 'bg-white/25 text-white'
+                        }`}
+                        title={running ? 'Pausar' : 'Iniciar'}
+                      >
+                        {running ? '❚❚' : '▶'}
+                      </button>
+                      <button
+                        onClick={openClockEdit}
+                        className="w-8 h-8 rounded bg-white/20 text-white font-bold text-xs"
+                        title="Editar tiempo"
+                      >
+                        ✎
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+              <p className="opacity-60 leading-none text-xs mt-1">Q{match.quarter || 1}</p>
+              <div className="flex gap-1 justify-center mt-1">
+                {[1, 2, 3, 4].map(q => (
+                  <button
+                    key={q}
+                    onClick={() => updateQuarter(q)}
+                    disabled={!canEdit}
+                    className={`w-7 h-7 rounded font-bold text-xs transition-colors ${
+                      match.quarter === q ? 'bg-white text-gray-900' : 'bg-white/20 text-white'
+                    }`}
+                  >
+                    {q}
+                  </button>
+                ))}
+                <button
+                  onClick={() => updateQuarter(5)}
+                  disabled={!canEdit}
+                  className={`w-7 h-7 rounded font-bold text-xs transition-colors ${
+                    match.quarter === 5 ? 'bg-white text-gray-900' : 'bg-white/20 text-white'
+                  }`}
+                >
+                  OT
+                </button>
+              </div>
+            </div>
+            <div className="min-w-0">
+              <p className="font-medium opacity-80 truncate text-sm">
+                {awayTeam?.name}
+              </p>
+              <p className="font-bold leading-none text-4xl">{match.awayScore || 0}</p>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Columnas de cada equipo */}
