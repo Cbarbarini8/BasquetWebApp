@@ -4,8 +4,10 @@ import { db } from '../../lib/firebase';
 import { uploadToCloudinary } from '../../lib/cloudinary';
 import { logAction } from '../../lib/audit';
 import { IconButton, EditIcon, DeleteIcon, CheckIcon, ImageIcon } from '../common/Icons';
+import { useToast } from '../../context/ToastContext';
 
 export default function SeasonForm({ seasons, canEdit, user }) {
+  const { toast } = useToast();
   const [name, setName] = useState('');
   const [editingId, setEditingId] = useState(null);
   const [logoFile, setLogoFile] = useState(null);
@@ -47,7 +49,7 @@ export default function SeasonForm({ seasons, canEdit, user }) {
       resetForm();
     } catch (err) {
       console.error(err);
-      alert('Error al guardar temporada');
+      toast.error('Error al guardar temporada');
     } finally {
       setUploading(false);
     }

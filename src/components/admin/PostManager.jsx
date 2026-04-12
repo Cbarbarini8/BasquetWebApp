@@ -4,6 +4,7 @@ import { db } from '../../lib/firebase';
 import { logAction } from '../../lib/audit';
 import { uploadToCloudinary } from '../../lib/cloudinary';
 import { IconButton, DeleteIcon } from '../common/Icons';
+import { useToast } from '../../context/ToastContext';
 
 function extractInstagramUrl(url) {
   const cleaned = url.trim();
@@ -20,6 +21,7 @@ function getPostLabel(url) {
 }
 
 export default function PostManager({ posts, canEdit, user }) {
+  const { toast } = useToast();
   const [url, setUrl] = useState('');
   const [thumbFile, setThumbFile] = useState(null);
   const [thumbPreview, setThumbPreview] = useState('');
@@ -40,7 +42,7 @@ export default function PostManager({ posts, canEdit, user }) {
     e.preventDefault();
     const igUrl = extractInstagramUrl(url);
     if (!igUrl) {
-      alert('URL de Instagram no valida. Usa el formato: instagram.com/p/CODIGO o instagram.com/reel/CODIGO');
+      toast.warning('URL de Instagram no valida. Usa el formato: instagram.com/p/CODIGO o instagram.com/reel/CODIGO');
       return;
     }
 
@@ -64,7 +66,7 @@ export default function PostManager({ posts, canEdit, user }) {
       if (fileRef.current) fileRef.current.value = '';
     } catch (err) {
       console.error(err);
-      alert('Error al guardar');
+      toast.error('Error al guardar');
     } finally {
       setSaving(false);
     }

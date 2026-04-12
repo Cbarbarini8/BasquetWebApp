@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { logAction } from '../../lib/audit';
+import { useToast } from '../../context/ToastContext';
 
 function generateRoundRobin(teamIds) {
   const teams = [...teamIds];
@@ -30,17 +31,18 @@ function generateRoundRobin(teamIds) {
 }
 
 export default function FixtureGenerator({ teams, matches, activeSeason, canEdit, user }) {
+  const { toast } = useToast();
   const [loading, setLoading] = useState(false);
 
   const hasMatches = matches.length > 0;
 
   const handleGenerate = async () => {
     if (!activeSeason) {
-      alert('Crea una temporada primero desde la pestaña "Temporadas"');
+      toast.warning('Crea una temporada primero desde la pestaña "Temporadas"');
       return;
     }
     if (teams.length < 2) {
-      alert('Se necesitan al menos 2 equipos');
+      toast.warning('Se necesitan al menos 2 equipos');
       return;
     }
 
@@ -70,10 +72,10 @@ export default function FixtureGenerator({ teams, matches, activeSeason, canEdit
       }
 
       await logAction(user, 'create', 'matches', null, `Genero fixture: ${rounds.length} fechas para "${activeSeason.name}"`);
-      alert(`Fixture generado: ${rounds.length} fechas para "${activeSeason.name}". Asigna dia y horario a cada partido desde la pestaña "Partidos".`);
+      toast.success(`Fixture generado: ${rounds.length} fechas para "${activeSeason.name}". Asigná día y horario desde "Partidos".`, 6000);
     } catch (err) {
       console.error('Error generating fixture:', err);
-      alert('Error al generar el fixture');
+      toast.error('Error al generar el fixture');
     } finally {
       setLoading(false);
     }

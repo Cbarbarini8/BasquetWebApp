@@ -5,6 +5,7 @@ import { generateToken } from '../../lib/utils';
 import { uploadToCloudinary } from '../../lib/cloudinary';
 import { logAction } from '../../lib/audit';
 import { IconButton, EditIcon, DeleteIcon, LinkIcon, CheckIcon, XIcon, ImageIcon } from '../common/Icons';
+import { useToast } from '../../context/ToastContext';
 
 function PlayerPhoto({ url, name, size = 36 }) {
   if (!url) {
@@ -21,6 +22,7 @@ function PlayerPhoto({ url, name, size = 36 }) {
 }
 
 export default function PlayerForm({ players, teams, canEdit, user }) {
+  const { toast } = useToast();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [number, setNumber] = useState('');
@@ -91,7 +93,7 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
       resetForm();
     } catch (err) {
       console.error(err);
-      alert('Error al guardar jugador');
+      toast.error('Error al guardar jugador');
     } finally {
       setUploading(false);
     }

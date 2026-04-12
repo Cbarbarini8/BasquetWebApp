@@ -6,8 +6,10 @@ import { logAction } from '../lib/audit';
 import { useParams } from 'react-router-dom';
 import PageShell from '../components/layout/PageShell';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import { useToast } from '../context/ToastContext';
 
 export default function PlayerPhotoUpload() {
+  const { toast } = useToast();
   const { token } = useParams();
   const [player, setPlayer] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -41,7 +43,7 @@ export default function PlayerPhotoUpload() {
     const f = e.target.files[0];
     if (!f) return;
     if (f.size > 5 * 1024 * 1024) {
-      alert('La imagen no puede superar los 5MB');
+      toast.warning('La imagen no puede superar los 5MB');
       return;
     }
     setFile(f);
@@ -63,7 +65,7 @@ export default function PlayerPhotoUpload() {
       setSubmitted(true);
     } catch (err) {
       console.error(err);
-      alert('Error al subir la foto. Intenta de nuevo.');
+      toast.error('Error al subir la foto. Intenta de nuevo.');
     } finally {
       setSaving(false);
     }

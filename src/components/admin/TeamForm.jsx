@@ -5,8 +5,10 @@ import { uploadToCloudinary } from '../../lib/cloudinary';
 import { logAction } from '../../lib/audit';
 import TeamLogo from '../common/TeamLogo';
 import { IconButton, EditIcon, DeleteIcon, ImageIcon } from '../common/Icons';
+import { useToast } from '../../context/ToastContext';
 
 export default function TeamForm({ teams, canEdit, user }) {
+  const { toast } = useToast();
   const [name, setName] = useState('');
   const [shortName, setShortName] = useState('');
   const [logoFile, setLogoFile] = useState(null);
@@ -60,7 +62,7 @@ export default function TeamForm({ teams, canEdit, user }) {
       resetForm();
     } catch (err) {
       console.error(err);
-      alert('Error al guardar equipo');
+      toast.error('Error al guardar equipo');
     } finally {
       setUploading(false);
     }
