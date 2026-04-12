@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { collection, addDoc, doc, updateDoc, deleteDoc, getDocs, serverTimestamp, Timestamp, orderBy, query, writeBatch } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../../lib/firebase';
-import { logAction } from '../../lib/audit';
+import { logAction, logStatsParticipation } from '../../lib/audit';
+import { useToast } from '../../context/ToastContext';
+import StartMatchModal from './StartMatchModal';
 import { getMatchProximityToNow } from '../../lib/utils';
 import { IconButton, EditIcon, DeleteIcon, PlayIcon, StopIcon, CalendarIcon, ClipboardIcon, UndoIcon } from '../common/Icons';
 
@@ -20,6 +22,7 @@ const EVENT_TYPES = [
 ];
 
 function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
+  const { toast } = useToast();
   const home = teamsMap[match.homeTeamId]?.name || 'TBD';
   const away = teamsMap[match.awayTeamId]?.name || 'TBD';
   const isFinished = match.status === 'finished';
@@ -76,7 +79,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
       onClose();
     } catch (err) {
       console.error('Error updating match:', err);
-      alert('Error al guardar');
+      toast.error('Error al guardar');
     } finally {
       setSaving(false);
     }
@@ -97,14 +100,13 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
 
     const ref = await addDoc(collection(db, `matches/${match.id}/events`), eventData);
     setEvents(prev => [{ id: ref.id, ...eventData, timestamp: new Date() }, ...prev]);
-    if (user) await logAction(user, 'create', 'matchEvents', match.id, `Evento ${evtDef.label}: ${getPlayerName(addPlayerId)} (${home} vs ${away})`);
+    if (user) await logStatsParticipation(user, match.id, `${home} vs ${away}`);
   };
 
   const handleDeleteEvent = async (eventId) => {
-    const evt = events.find(e => e.id === eventId);
     await deleteDoc(doc(db, `matches/${match.id}/events`, eventId));
     setEvents(prev => prev.filter(e => e.id !== eventId));
-    if (user && evt) await logAction(user, 'delete', 'matchEvents', match.id, `Elimino evento: ${getPlayerName(evt.playerId)} (${home} vs ${away})`);
+    if (user) await logStatsParticipation(user, match.id, `${home} vs ${away}`);
   };
 
   const handleClearAll = async () => {
@@ -325,6 +327,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
 }
 
 function ManualMatchForm({ teams, courts, seasonId, onClose }) {
+  const { toast } = useToast();
   const [round, setRound] = useState('');
   const [homeTeamId, setHomeTeamId] = useState('');
   const [awayTeamId, setAwayTeamId] = useState('');
@@ -340,7 +343,7 @@ function ManualMatchForm({ teams, courts, seasonId, onClose }) {
     e.preventDefault();
     if (!homeTeamId || !awayTeamId || !round) return;
     if (homeTeamId === awayTeamId) {
-      alert('Los equipos deben ser diferentes');
+      toast.warning('Los equipos deben ser diferentes');
       return;
     }
 
@@ -375,7 +378,7 @@ function ManualMatchForm({ teams, courts, seasonId, onClose }) {
       setCourtId('');
     } catch (err) {
       console.error('Error creating match:', err);
-      alert('Error al crear el partido');
+      toast.error('Error al crear el partido');
     } finally {
       setSaving(false);
     }
@@ -506,6 +509,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
   const navigate = useNavigate();
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [startingMatch, setStartingMatch] = useState(null);
 
   const getMatchLabel = (matchId) => {
     const m = matches.find(x => x.id === matchId);
@@ -515,15 +519,23 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     return `${h} vs ${a}`;
   };
 
-  const startMatch = async (matchId) => {
-    await updateDoc(doc(db, 'matches', matchId), {
+  const confirmStartMatch = async (playerNumbers) => {
+    const m = startingMatch;
+    if (!m) return;
+    await updateDoc(doc(db, 'matches', m.id), {
       status: 'live',
       quarter: 1,
       homeScore: 0,
       awayScore: 0,
       startedAt: serverTimestamp(),
+      playerNumbers,
+      timeouts: { home: {}, away: {} },
+      clockRunning: false,
+      clockRemainingMs: 10 * 60 * 1000,
+      clockStartedAt: null,
     });
-    await logAction(user, 'start', 'matches', matchId, `Inicio partido: ${getMatchLabel(matchId)}`);
+    await logAction(user, 'start', 'matches', m.id, `Inicio partido: ${getMatchLabel(m.id)}`);
+    setStartingMatch(null);
   };
 
   const finishMatch = async (matchId) => {
@@ -549,6 +561,11 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       finishedAt: null,
       onCourtHome: [],
       onCourtAway: [],
+      timeouts: { home: {}, away: {} },
+      scoredBy: [],
+      clockRunning: false,
+      clockRemainingMs: 10 * 60 * 1000,
+      clockStartedAt: null,
     });
     await batch.commit();
     await logAction(user, 'reset', 'matches', matchId, `Reseteo partido: ${getMatchLabel(matchId)} (${eventsSnap.size} eventos eliminados)`);
@@ -639,6 +656,15 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
           </div>
         )}
       </div>
+      {startingMatch && (
+        <StartMatchModal
+          match={startingMatch}
+          teamsMap={teamsMap}
+          players={players || []}
+          onCancel={() => setStartingMatch(null)}
+          onConfirm={confirmStartMatch}
+        />
+      )}
     </div>
   );
 
@@ -693,7 +719,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
                     {canEdit && match.status === 'scheduled' && (
                       <>
                         <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
-                        <IconButton icon={PlayIcon} label="Iniciar" onClick={() => startMatch(match.id)} color="var(--color-success)" />
+                        <IconButton icon={PlayIcon} label="Iniciar" onClick={() => setStartingMatch(match)} color="var(--color-success)" />
                       </>
                     )}
                     {match.status === 'live' && (canEdit || canScoring) && (

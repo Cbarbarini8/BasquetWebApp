@@ -21,11 +21,15 @@ export default function AdminMatchPage() {
 
   const { homeTeam, awayTeam, homePlayers, awayPlayers } = useMemo(() => {
     if (!match) return { homeTeam: null, awayTeam: null, homePlayers: [], awayPlayers: [] };
+    const overrides = match.playerNumbers || {};
+    const hasRoster = Object.keys(overrides).length > 0;
+    const inRoster = (p) => !hasRoster || p.id in overrides;
+    const withMatchNumber = (p) => ({ ...p, number: overrides[p.id] ?? p.number });
     return {
       homeTeam: teams.find(t => t.id === match.homeTeamId),
       awayTeam: teams.find(t => t.id === match.awayTeamId),
-      homePlayers: allPlayers.filter(p => p.teamId === match.homeTeamId).sort((a, b) => a.number - b.number),
-      awayPlayers: allPlayers.filter(p => p.teamId === match.awayTeamId).sort((a, b) => a.number - b.number),
+      homePlayers: allPlayers.filter(p => p.teamId === match.homeTeamId).filter(inRoster).map(withMatchNumber).sort((a, b) => a.number - b.number),
+      awayPlayers: allPlayers.filter(p => p.teamId === match.awayTeamId).filter(inRoster).map(withMatchNumber).sort((a, b) => a.number - b.number),
     };
   }, [match, teams, allPlayers]);
 

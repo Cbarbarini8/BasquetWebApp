@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { collection, doc, updateDoc, writeBatch, getDocs, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
@@ -6,6 +6,9 @@ import { logAction } from '../../lib/audit';
 import TeamLogo from '../common/TeamLogo';
 import EmptyState from '../common/EmptyState';
 import LiveBadge from '../common/LiveBadge';
+import { useToast } from '../../context/ToastContext';
+import StartMatchModal from './StartMatchModal';
+
 
 function getDateKey(d) {
   if (!d) return null;
@@ -25,9 +28,10 @@ function getTodayKey() {
   return `${y}-${m}-${d}`;
 }
 
-export default function ScoringToday({ matches, teamsMap, courtsMap, canEdit, user }) {
+export default function ScoringToday({ matches, teamsMap, courtsMap, players = [], canEdit, user }) {
   const navigate = useNavigate();
   const todayKey = getTodayKey();
+  const [startingMatch, setStartingMatch] = useState(null);
 
   const todayMatches = useMemo(() => {
     return matches
@@ -48,19 +52,26 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, canEdit, us
       });
   }, [matches, todayKey]);
 
-  const startMatch = async (matchId) => {
-    const m = matches.find(x => x.id === matchId);
-    const home = teamsMap[m?.homeTeamId]?.name || 'TBD';
-    const away = teamsMap[m?.awayTeamId]?.name || 'TBD';
-    await updateDoc(doc(db, 'matches', matchId), {
+  const confirmStartMatch = async (playerNumbers) => {
+    const m = startingMatch;
+    if (!m) return;
+    const home = teamsMap[m.homeTeamId]?.name || 'TBD';
+    const away = teamsMap[m.awayTeamId]?.name || 'TBD';
+    await updateDoc(doc(db, 'matches', m.id), {
       status: 'live',
       quarter: 1,
       homeScore: 0,
       awayScore: 0,
       startedAt: serverTimestamp(),
+      playerNumbers,
+      timeouts: { home: {}, away: {} },
+      clockRunning: false,
+      clockRemainingMs: 10 * 60 * 1000,
+      clockStartedAt: null,
     });
-    if (user) await logAction(user, 'start', 'matches', matchId, `Inicio partido: ${home} vs ${away}`);
-    navigate(`/admin/match/${matchId}`);
+    if (user) await logAction(user, 'start', 'matches', m.id, `Inicio partido: ${home} vs ${away}`);
+    setStartingMatch(null);
+    navigate(`/admin/match/${m.id}`);
   };
 
   const resetMatch = async (matchId) => {
@@ -80,6 +91,11 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, canEdit, us
       finishedAt: null,
       onCourtHome: [],
       onCourtAway: [],
+      timeouts: { home: {}, away: {} },
+      scoredBy: [],
+      clockRunning: false,
+      clockRemainingMs: 10 * 60 * 1000,
+      clockStartedAt: null,
     });
     await batch.commit();
     if (user) await logAction(user, 'reset', 'matches', matchId, `Reseteo partido: ${home} vs ${away} (${eventsSnap.size} eventos eliminados)`);
@@ -179,7 +195,7 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, canEdit, us
               <div className="flex items-center justify-end gap-2 mt-3 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
                 {isScheduled && canEdit && (
                   <button
-                    onClick={() => startMatch(match.id)}
+                    onClick={() => setStartingMatch(match)}
                     className="px-4 py-2 rounded-md text-white text-sm font-medium"
                     style={{ backgroundColor: 'var(--color-success)' }}
                   >
@@ -216,6 +232,15 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, canEdit, us
           );
         })}
       </div>
+      {startingMatch && (
+        <StartMatchModal
+          match={startingMatch}
+          teamsMap={teamsMap}
+          players={players}
+          onCancel={() => setStartingMatch(null)}
+          onConfirm={confirmStartMatch}
+        />
+      )}
     </div>
   );
 }
