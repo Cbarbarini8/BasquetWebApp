@@ -20,7 +20,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run dev` — Start dev server
 - `npm run build` — Production build (outputs to `dist/`)
 - `npm run lint` — ESLint
+- `npm run preview` — Preview production build locally
 - `npm run build && firebase deploy --only hosting` — Deploy to production
+- No test framework — no unit or integration tests exist
 
 ## Architecture
 
@@ -57,17 +59,45 @@ Other: `foul`, `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover
 `BrowserRouter` → `ThemeProvider` → `AuthProvider` → routes. `useAuth()` returns `{ user, userDoc, loading, isOwner, isActive, canView, canEdit, login, logout }` — `canView(section)` / `canEdit(section)` check permission strings like 'teams', 'matches', etc.
 
 ### Key Patterns
-- `src/hooks/useCollection.js` — Generic real-time Firestore hook; all data hooks build on it
+- `src/hooks/useCollection.js` — Generic real-time Firestore hook; all data hooks build on it. Uses `JSON.stringify(queryConstraints)` in deps to prevent infinite re-renders from array identity churn — preserve this pattern when extending.
+- `src/hooks/useDocument.js` — Single-document real-time hook counterpart
 - `src/hooks/useUserRole.js` — Role/permissions hook for current user
 - `src/lib/calculations.js` — Pure functions for standings and player stats computation
-- `src/lib/audit.js` — `logAction(user, action, collection, documentId, description, details)` writes to auditLog (ALL writes must be audited)
+- `src/lib/audit.js` — `logAction(user, action, collection, documentId, description, details)` writes to auditLog (ALL writes must be audited). Called **after** the Firestore commit, not inside the batch, so audit failures never block the mutation.
 - `src/lib/cloudinary.js` — Upload with folder and publicId (uses entity ID to overwrite, not duplicate)
 - `src/lib/utils.js` — normalizeDriveUrl, generateToken
-- Theme system uses CSS variables on `:root` with `data-theme` attribute (3 themes: blue, orange, dark)
-- Admin routes protected via `ProtectedRoute` component + Firebase Auth + users collection
+- Theme system uses CSS variables on `:root` with `data-theme` attribute (3 themes: blue, orange, dark). Blue is the base (no attribute set); `orange` / `dark` set `data-theme`. Persisted in localStorage.
+- Admin routes protected via `ProtectedRoute` component + Firebase Auth + users collection (user must also exist in `users` collection with `active: true`)
 - All styles use CSS variables (`var(--color-*)`) for theme support — avoid hardcoded colors
 - Action buttons in admin use SVG icons with tooltips (see `src/components/common/Icons.jsx`)
 - Common UI: `PageShell` (layout wrapper with title), `SeasonSelector`, `TeamLogo`, `LoadingSpinner`, `EmptyState`, `LiveBadge`
+- Pure JavaScript — no TypeScript, no PropTypes. Trust component contracts; document signatures in JSDoc comments where ambiguous.
+
+### Data Composition Pattern
+Derived data hooks (`useStandings`, `usePlayerStats`) follow a three-layer pattern:
+1. Fetch raw data via thin `useCollection` wrappers (e.g. `useMatches`, `useTeams`)
+2. Compute via pure functions from `src/lib/calculations.js`
+3. Wrap the result in `useMemo` keyed on the raw inputs
+
+`usePlayerStats` aggregates events across many `matches/{id}/events` subcollections by attaching one `onSnapshot` per match and tracking an `initialLoadCount` to coordinate first-paint. If you add similar multi-subcollection aggregation, early-return when the parent list is empty to avoid unnecessary listeners.
+
+### Scoring Batch Write Contract
+In `LiveScoring.jsx`, every scoring change touches two places in one `writeBatch`:
+1. Add/remove the event document in `matches/{id}/events`
+2. Increment/decrement `homeScore`/`awayScore` on the match doc (denormalized)
+
+Undo must reverse **both**. If you add new event mutations, preserve this pairing or the denormalized score will drift from the event log. Audit log is written after the batch commits.
+
+### Permission Check Order
+`useUserRole.hasPermission` checks in this specific order — preserve it:
+1. `!userDoc || !isActive` → false (deactivated users, including deactivated owners, lose access)
+2. `isOwner` → true (owner bypass)
+3. Specific section permission ('view' / 'edit' / 'none')
+
+`AdminDashboard` filters tab visibility at render: `ownerOnly` tabs (Users, Audit) are hidden from non-owners; the matches tab is shown if the user can view **either** matches or scoring.
+
+### Compact Mode
+`LiveScoring` accepts a `compact` prop (driven by `useIsCompactScoring` — landscape-phone heuristic) that reshapes jersey sizes, grid columns, text sizes, and flips the away side to `flex-row-reverse`. Keep both modes in sync when editing the scoring UI.
 
 ### Roles & Permissions
 - **Owner**: full access + Users/Audit tabs
