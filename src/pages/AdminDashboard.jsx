@@ -15,6 +15,7 @@ import ScoringToday from '../components/admin/ScoringToday';
 import SeasonForm from '../components/admin/SeasonForm';
 import CourtForm from '../components/admin/CourtForm';
 import PostManager from '../components/admin/PostManager';
+import UpdatesManager from '../components/admin/UpdatesManager';
 import UserManager from '../components/admin/UserManager';
 import AuditLog from '../components/admin/AuditLog';
 import LoadingSpinner from '../components/common/LoadingSpinner';
@@ -28,6 +29,7 @@ const ALL_TABS = [
   { id: 'matches', label: 'Partidos', permission: 'matches' },
   { id: 'scoring', label: 'Planilla en vivo', permission: 'scoring' },
   { id: 'posts', label: 'Instagram', permission: 'posts' },
+  { id: 'updates', label: 'Actualizaciones', permission: 'updates' },
   { id: 'users', label: 'Usuarios', ownerOnly: true },
   { id: 'audit', label: 'Auditoria', ownerOnly: true },
 ];
@@ -46,7 +48,6 @@ export default function AdminDashboard() {
   const visibleTabs = useMemo(() => {
     return ALL_TABS.filter(tab => {
       if (tab.ownerOnly) return isOwner;
-      if (tab.id === 'matches') return canView('matches') || canView('scoring');
       return canView(tab.permission);
     });
   }, [isOwner, canView]);
@@ -127,8 +128,9 @@ export default function AdminDashboard() {
           {currentTab === 'courts' && <CourtForm courts={courts} canEdit={canEdit('courts')} user={user} />}
           {currentTab === 'fixture' && <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit('fixture')} user={user} />}
           {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} canScoring={canView('scoring')} user={user} />}
-          {currentTab === 'scoring' && <ScoringToday matches={matches} teamsMap={teamsMap} courtsMap={courtsMap} canEdit={canEdit('scoring')} user={user} />}
+          {currentTab === 'scoring' && <ScoringToday matches={matches} teamsMap={teamsMap} courtsMap={courtsMap} players={players} canEdit={canEdit('scoring')} user={user} />}
           {currentTab === 'posts' && <PostManager posts={posts} canEdit={canEdit('posts')} user={user} />}
+          {currentTab === 'updates' && <UpdatesManager isOwner={isOwner} user={user} />}
           {currentTab === 'users' && isOwner && <UserManager currentUser={user} />}
           {currentTab === 'audit' && isOwner && <AuditLog />}
         </>

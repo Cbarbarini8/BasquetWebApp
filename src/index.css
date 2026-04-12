@@ -121,3 +121,19 @@ button, select {
 .animate-pulse-live {
   animation: pulse-live 1.5s ease-in-out infinite;
 }
+
+/* ===== Rich Text (Actualizaciones) ===== */
+.rich-content, .rich-editor {
+  word-break: break-word;
+}
+.rich-content h1, .rich-editor h1 { font-size: 1.25rem; font-weight: 700; margin: 0.5rem 0 0.25rem; color: var(--color-text); }
+.rich-content h2, .rich-editor h2 { font-size: 1.125rem; font-weight: 700; margin: 0.5rem 0 0.25rem; color: var(--color-text); }
+.rich-content h3, .rich-editor h3 { font-size: 1rem; font-weight: 700; margin: 0.5rem 0 0.25rem; color: var(--color-text); }
+.rich-content p, .rich-editor p { margin: 0.25rem 0; }
+.rich-content ul, .rich-editor ul { list-style: disc; padding-left: 1.5rem; margin: 0.25rem 0; }
+.rich-content ol, .rich-editor ol { list-style: decimal; padding-left: 1.5rem; margin: 0.25rem 0; }
+.rich-content li, .rich-editor li { margin: 0.15rem 0; }
+.rich-content strong, .rich-editor strong, .rich-content b, .rich-editor b { font-weight: 700; color: var(--color-text); }
+.rich-content em, .rich-editor em, .rich-content i, .rich-editor i { font-style: italic; }
+.rich-content u, .rich-editor u { text-decoration: underline; }
+.rich-content a, .rich-editor a { color: var(--color-primary); text-decoration: underline; }

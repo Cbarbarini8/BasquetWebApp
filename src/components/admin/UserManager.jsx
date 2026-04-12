@@ -5,6 +5,7 @@ import { useCollection } from '../../hooks/useCollection';
 import { logAction } from '../../lib/audit';
 import { orderBy } from 'firebase/firestore';
 import { IconButton, ShieldIcon, ToggleOnIcon, ToggleOffIcon, CopyIcon } from '../common/Icons';
+import { useToast } from '../../context/ToastContext';
 
 const SECTION_LABELS = {
   seasons: 'Temporadas',
@@ -15,6 +16,7 @@ const SECTION_LABELS = {
   matches: 'Partidos',
   scoring: 'Planilla en vivo',
   posts: 'Instagram',
+  updates: 'Actualizaciones',
 };
 
 const PERM_OPTIONS = [
@@ -24,6 +26,7 @@ const PERM_OPTIONS = [
 ];
 
 export default function UserManager({ currentUser }) {
+  const { toast } = useToast();
   const { data: users } = useCollection('users', [orderBy('createdAt', 'desc')]);
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -71,7 +74,7 @@ export default function UserManager({ currentUser }) {
       resetForm();
     } catch (err) {
       console.error(err);
-      alert('Error al guardar usuario');
+      toast.error('Error al guardar usuario');
     } finally {
       setSaving(false);
     }
