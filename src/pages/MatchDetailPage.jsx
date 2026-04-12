@@ -5,6 +5,7 @@ import { useMatchEvents } from '../hooks/useMatchEvents';
 import { useTeams } from '../hooks/useTeams';
 import { usePlayers } from '../hooks/usePlayers';
 import { useCourts } from '../hooks/useCourts';
+import { useMatchClock } from '../hooks/useMatchClock';
 import PageShell from '../components/layout/PageShell';
 import TeamLogo from '../components/common/TeamLogo';
 import LiveBadge from '../components/common/LiveBadge';
@@ -185,11 +186,15 @@ export default function MatchDetailPage() {
 
   const { homeTeam, awayTeam, homePlayers, awayPlayers, court } = useMemo(() => {
     if (!match) return { homeTeam: null, awayTeam: null, homePlayers: [], awayPlayers: [], court: null };
+    const overrides = match.playerNumbers || {};
+    const hasRoster = Object.keys(overrides).length > 0;
+    const inRoster = (p) => !hasRoster || p.id in overrides;
+    const withMatchNumber = (p) => ({ ...p, number: overrides[p.id] ?? p.number });
     return {
       homeTeam: teams.find(t => t.id === match.homeTeamId),
       awayTeam: teams.find(t => t.id === match.awayTeamId),
-      homePlayers: allPlayers.filter(p => p.teamId === match.homeTeamId),
-      awayPlayers: allPlayers.filter(p => p.teamId === match.awayTeamId),
+      homePlayers: allPlayers.filter(p => p.teamId === match.homeTeamId).filter(inRoster).map(withMatchNumber),
+      awayPlayers: allPlayers.filter(p => p.teamId === match.awayTeamId).filter(inRoster).map(withMatchNumber),
       court: match.courtId ? courts.find(c => c.id === match.courtId) : null,
     };
   }, [match, teams, allPlayers, courts]);
@@ -203,6 +208,8 @@ export default function MatchDetailPage() {
       awayStats: computeBoxScore(awayEvents, awayPlayers),
     };
   }, [match, events, homePlayers, awayPlayers]);
+
+  const { mmss: clockMmss, running: clockRunning } = useMatchClock(match);
 
   const loading = matchLoading || eventsLoading || teamsLoading || playersLoading || courtsLoading;
 
@@ -221,6 +228,14 @@ export default function MatchDetailPage() {
   const isFinished = match.status === 'finished';
   const homeWon = isFinished && (match.homeScore || 0) > (match.awayScore || 0);
   const awayWon = isFinished && (match.awayScore || 0) > (match.homeScore || 0);
+
+  const currentQuarter = match.quarter || 1;
+  const teamFoulsQ = (teamId) =>
+    events.filter(e => e.type === 'foul' && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
+  const homeTeamFouls = isLive ? teamFoulsQ(match.homeTeamId) : 0;
+  const awayTeamFouls = isLive ? teamFoulsQ(match.awayTeamId) : 0;
+  const homeTO = !!(match.timeouts?.home?.[currentQuarter]);
+  const awayTO = !!(match.timeouts?.away?.[currentQuarter]);
 
   const formatDate = (d) => {
     if (!d) return '';
@@ -242,28 +257,102 @@ export default function MatchDetailPage() {
         className="rounded-lg p-6 mb-6 text-center"
         style={{ backgroundColor: 'var(--color-table-header)', color: '#ffffff' }}
       >
+        {/* 1. EN VIVO */}
+        {isLive && (
+          <div className="flex items-center justify-center mb-2">
+            <LiveBadge />
+          </div>
+        )}
+        {isFinished && (
+          <p className="text-xs font-bold tracking-widest mb-2 opacity-70">FINAL</p>
+        )}
+
+        {/* 2. Cuarto + Reloj */}
+        {isLive && (
+          <div
+            className="inline-flex items-stretch rounded-md overflow-hidden mb-3 font-bold tabular-nums"
+            style={{ border: '1px solid rgba(255,255,255,0.3)' }}
+            title={clockRunning ? 'Reloj en marcha' : 'Reloj pausado'}
+          >
+            <span
+              className="px-3 flex items-center text-4xl md:text-5xl leading-none"
+              style={{ backgroundColor: 'rgba(255,255,255,0.18)' }}
+            >
+              {(match.quarter || 1) >= 5 ? `OT${match.quarter > 5 ? match.quarter - 4 : ''}` : `Q${match.quarter || 1}`}
+            </span>
+            <span
+              className="px-3 flex items-center gap-2 text-4xl md:text-5xl font-mono leading-none"
+              style={{ borderLeft: '1px solid rgba(255,255,255,0.3)' }}
+            >
+              <span className="text-xl md:text-2xl opacity-80">{clockRunning ? '▶' : '❚❚'}</span>
+              {clockMmss}
+            </span>
+          </div>
+        )}
+
+        {/* 3. Faltas de equipo y tiempos muertos */}
+        {isLive && (
+          <div className="mb-3 flex items-center justify-center gap-4 text-xs">
+            <div className="flex items-center gap-1.5">
+              <span
+                className="px-1.5 py-0.5 rounded font-medium"
+                style={{
+                  backgroundColor: homeTeamFouls >= 4 ? 'rgba(239,68,68,0.85)' : 'rgba(255,255,255,0.15)',
+                }}
+                title="Faltas de equipo en el cuarto actual"
+              >
+                F {Math.min(homeTeamFouls, 5)}/5
+              </span>
+              <span
+                className="px-1.5 py-0.5 rounded font-medium"
+                style={{
+                  backgroundColor: homeTO ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.15)',
+                  color: homeTO ? '#111827' : '#ffffff',
+                }}
+                title={`Tiempo muerto Q${currentQuarter} ${homeTO ? '(usado)' : '(disponible)'}`}
+              >
+                {homeTO ? '● TO' : '○ TO'}
+              </span>
+            </div>
+            <span className="opacity-60">·</span>
+            <div className="flex items-center gap-1.5">
+              <span
+                className="px-1.5 py-0.5 rounded font-medium"
+                style={{
+                  backgroundColor: awayTO ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.15)',
+                  color: awayTO ? '#111827' : '#ffffff',
+                }}
+                title={`Tiempo muerto Q${currentQuarter} ${awayTO ? '(usado)' : '(disponible)'}`}
+              >
+                {awayTO ? '● TO' : '○ TO'}
+              </span>
+              <span
+                className="px-1.5 py-0.5 rounded font-medium"
+                style={{
+                  backgroundColor: awayTeamFouls >= 4 ? 'rgba(239,68,68,0.85)' : 'rgba(255,255,255,0.15)',
+                }}
+                title="Faltas de equipo en el cuarto actual"
+              >
+                F {Math.min(awayTeamFouls, 5)}/5
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 4. Puntaje centrado */}
         <div className="flex items-center justify-center gap-6 md:gap-10">
           <div className="flex flex-col items-center gap-2">
             <TeamLogo url={homeTeam?.logoUrl} name={homeTeam?.name} size={56} />
             <p className="text-sm font-medium opacity-90">{homeTeam?.name}</p>
           </div>
-          <div className="text-center">
-            <div className="flex items-center gap-4">
-              <span className="text-4xl md:text-5xl font-bold" style={{ opacity: awayWon ? 0.4 : 1 }}>
-                {match.homeScore || 0}
-              </span>
-              <span className="text-xl opacity-40">-</span>
-              <span className="text-4xl md:text-5xl font-bold" style={{ opacity: homeWon ? 0.4 : 1 }}>
-                {match.awayScore || 0}
-              </span>
-            </div>
-            {isLive && (
-              <div className="mt-2">
-                <LiveBadge />
-                {match.quarter && <span className="ml-2 text-sm opacity-70">Q{match.quarter}</span>}
-              </div>
-            )}
-            {isFinished && <p className="text-xs mt-2 opacity-60">FINAL</p>}
+          <div className="flex items-center gap-4">
+            <span className="text-4xl md:text-5xl font-bold" style={{ opacity: awayWon ? 0.4 : 1 }}>
+              {match.homeScore || 0}
+            </span>
+            <span className="text-xl opacity-40">-</span>
+            <span className="text-4xl md:text-5xl font-bold" style={{ opacity: homeWon ? 0.4 : 1 }}>
+              {match.awayScore || 0}
+            </span>
           </div>
           <div className="flex flex-col items-center gap-2">
             <TeamLogo url={awayTeam?.logoUrl} name={awayTeam?.name} size={56} />
@@ -271,10 +360,12 @@ export default function MatchDetailPage() {
           </div>
         </div>
 
+        {/* 5 y 6. Fecha programada y cancha/fecha */}
         <div className="mt-3 text-xs opacity-60 space-y-0.5">
           {match.scheduledDate && <p>{formatDate(match.scheduledDate)} {match.scheduledTime && `- ${match.scheduledTime}`}</p>}
-          {court && <p>{court.name}</p>}
-          <p>Fecha {match.round}</p>
+          <p>
+            {court ? `${court.name} - ` : ''}Fecha {match.round}
+          </p>
         </div>
       </div>
 
