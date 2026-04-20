@@ -13,6 +13,9 @@ const EVENT_TYPES = [
   { type: '2pt', label: '+2', made: true },
   { type: '3pt', label: '+3', made: true },
   { type: 'foul', label: 'Falta' },
+  { type: 'foulTech', label: 'F. Tec' },
+  { type: 'foulUnsport', label: 'F. Anti' },
+  { type: 'ejection', label: 'Expul' },
   { type: 'assist', label: 'Asist' },
   { type: 'offRebound', label: 'Reb Of' },
   { type: 'defRebound', label: 'Reb Def' },
@@ -20,6 +23,15 @@ const EVENT_TYPES = [
   { type: 'block', label: 'Tapon' },
   { type: 'turnover', label: 'Perdida' },
 ];
+
+const eventColorFor = (type) => {
+  if (['ft', '2pt', '3pt'].includes(type)) return 'var(--color-success)';
+  if (type === 'foul') return 'var(--color-danger)';
+  if (type === 'foulTech') return '#ea580c';
+  if (type === 'foulUnsport') return '#b91c1c';
+  if (type === 'ejection') return '#18181b';
+  return 'var(--color-primary)';
+};
 
 function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
   const { toast } = useToast();
@@ -256,7 +268,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
                 {EVENT_TYPES.map(evt => (
                   <button key={evt.type} onClick={() => handleAddEvent(evt)}
                     className="text-xs px-2.5 py-1.5 rounded font-medium text-white active:scale-95 transition-transform"
-                    style={{ backgroundColor: ['ft', '2pt', '3pt'].includes(evt.type) ? 'var(--color-success)' : evt.type === 'foul' ? 'var(--color-danger)' : 'var(--color-primary)' }}>
+                    style={{ backgroundColor: eventColorFor(evt.type) }}>
                     {evt.label}
                   </button>
                 ))}

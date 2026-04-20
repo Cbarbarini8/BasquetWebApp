@@ -14,6 +14,9 @@ const EVENT_BUTTONS = [
   { type: 'ft', label: 'TL', made: true, points: 1, color: 'var(--color-accent)' },
   { type: 'ft', label: 'TL Err', made: false, points: 0, color: '#6b7280' },
   { type: 'foul', label: 'Falta', color: 'var(--color-danger)' },
+  { type: 'foulTech', label: 'F. Tec', color: '#ea580c' },
+  { type: 'foulUnsport', label: 'F. Anti', color: '#b91c1c' },
+  { type: 'ejection', label: 'Expul', color: '#18181b' },
   { type: 'assist', label: 'Asist', color: '#8b5cf6' },
   { type: 'offRebound', label: 'Reb Of', color: '#0891b2' },
   { type: 'defRebound', label: 'Reb Def', color: '#0d9488' },
@@ -27,6 +30,9 @@ const EVENT_LABELS = {
   '3pt': { true: '+3 pts', false: '3pts err' },
   'ft': { true: 'TL conv', false: 'TL err' },
   'foul': 'Falta',
+  'foulTech': 'Falta tecnica',
+  'foulUnsport': 'Falta antideportiva',
+  'ejection': 'Expulsion',
   'assist': 'Asistencia',
   'offRebound': 'Reb. ofensivo',
   'defRebound': 'Reb. defensivo',
@@ -34,6 +40,11 @@ const EVENT_LABELS = {
   'block': 'Tapon',
   'turnover': 'Perdida',
 };
+
+const PERSONAL_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport'];
+const FLAGRANT_FOUL_TYPES = ['foulTech', 'foulUnsport'];
+const PERSONAL_FOUL_LIMIT = 5;
+const FLAGRANT_FOUL_LIMIT = 2;
 
 const MAX_ON_COURT = 5;
 
@@ -113,16 +124,33 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   const onCourtAwayIds = match.onCourtAway || [];
   const currentQuarter = match.quarter || 1;
 
-  const playerFouls = useMemo(() => {
-    const map = {};
+  const { playerPersonalFouls, playerFlagrantFouls, ejectedPlayers } = useMemo(() => {
+    const personal = {};
+    const flagrant = {};
+    const ejected = new Set();
     events.forEach(e => {
-      if (e.type === 'foul') map[e.playerId] = (map[e.playerId] || 0) + 1;
+      if (PERSONAL_FOUL_TYPES.includes(e.type)) {
+        personal[e.playerId] = (personal[e.playerId] || 0) + 1;
+      }
+      if (FLAGRANT_FOUL_TYPES.includes(e.type)) {
+        flagrant[e.playerId] = (flagrant[e.playerId] || 0) + 1;
+      }
+      if (e.type === 'ejection') {
+        ejected.add(e.playerId);
+      }
     });
-    return map;
+    return { playerPersonalFouls: personal, playerFlagrantFouls: flagrant, ejectedPlayers: ejected };
   }, [events]);
 
+  const ejectionReason = (playerId) => {
+    if (ejectedPlayers.has(playerId)) return 'expulsion directa';
+    if ((playerFlagrantFouls[playerId] || 0) >= FLAGRANT_FOUL_LIMIT) return '2 faltas tecnicas/antideportivas';
+    if ((playerPersonalFouls[playerId] || 0) >= PERSONAL_FOUL_LIMIT) return '5 faltas';
+    return null;
+  };
+
   const teamFoulsQ = (teamId) =>
-    events.filter(e => e.type === 'foul' && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
+    events.filter(e => PERSONAL_FOUL_TYPES.includes(e.type) && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
 
   const homeTeamFouls = teamFoulsQ(match.homeTeamId);
   const awayTeamFouls = teamFoulsQ(match.awayTeamId);
@@ -143,9 +171,12 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     const field = side === 'home' ? 'onCourtHome' : 'onCourtAway';
     const currentIds = side === 'home' ? onCourtHomeIds : onCourtAwayIds;
     const isOn = currentIds.includes(playerId);
-    if (!isOn && (playerFouls[playerId] || 0) >= 5) {
-      toast.error('Este jugador esta expulsado (5 faltas) y no puede volver a la cancha.');
-      return;
+    if (!isOn) {
+      const reason = ejectionReason(playerId);
+      if (reason) {
+        toast.error(`Este jugador esta expulsado (${reason}) y no puede volver a la cancha.`);
+        return;
+      }
     }
     if (!isOn && currentIds.length >= MAX_ON_COURT) {
       toast.warning(`Maximo ${MAX_ON_COURT} jugadores en cancha. Sacar uno primero.`);
@@ -188,20 +219,31 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       batch.update(matchRef, { [scoreField]: increment(eventDef.points) });
     }
 
-    // Si este evento hace llegar al jugador a 5 faltas, sacarlo de cancha y abrir seleccion de reemplazo
-    const willReachFiveFouls = eventDef.type === 'foul' && (playerFouls[playerId] || 0) + 1 >= 5;
-    if (willReachFiveFouls) {
+    // Si este evento deja al jugador expulsado, sacarlo de cancha y abrir seleccion de reemplazo
+    const isFoulType = PERSONAL_FOUL_TYPES.includes(eventDef.type);
+    const isFlagrantType = FLAGRANT_FOUL_TYPES.includes(eventDef.type);
+    const nextPersonal = isFoulType ? (playerPersonalFouls[playerId] || 0) + 1 : (playerPersonalFouls[playerId] || 0);
+    const nextFlagrant = isFlagrantType ? (playerFlagrantFouls[playerId] || 0) + 1 : (playerFlagrantFouls[playerId] || 0);
+    const willReachFive = isFoulType && nextPersonal >= PERSONAL_FOUL_LIMIT;
+    const willReachTwoFlagrant = isFlagrantType && nextFlagrant >= FLAGRANT_FOUL_LIMIT;
+    const isDirectEjection = eventDef.type === 'ejection';
+    const willBeEjected = willReachFive || willReachTwoFlagrant || isDirectEjection;
+
+    if (willBeEjected) {
       const courtField = side === 'home' ? 'onCourtHome' : 'onCourtAway';
       batch.update(doc(db, 'matches', match.id), { [courtField]: arrayRemove(playerId) });
     }
 
     await batch.commit();
 
-    if (willReachFiveFouls) {
+    if (willBeEjected) {
       const label = getPlayerLabel(playerId);
       setSelectedPlayer(prev => ({ ...prev, [side]: '' }));
       setEditingCourt(prev => ({ ...prev, [side]: true }));
-      toast.error(`${label} llego a 5 faltas. Debe ser reemplazado.`, 6000);
+      const reason = isDirectEjection ? 'expulsion directa'
+        : willReachTwoFlagrant ? '2 faltas tecnicas/antideportivas'
+        : '5 faltas';
+      toast.error(`${label} queda expulsado (${reason}). Debe ser reemplazado.`, 6000);
     }
 
     if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
@@ -419,7 +461,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                         selected={selected === p.id}
                         onClick={() => setSelectedPlayer(prev => ({ ...prev, [side]: p.id }))}
                         compact
-                        fouls={playerFouls[p.id] || 0}
+                        fouls={playerPersonalFouls[p.id] || 0}
                       />
                     );
                   })}
@@ -452,7 +494,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     selected={selected === p.id}
                     onClick={() => setSelectedPlayer(prev => ({ ...prev, [side]: p.id }))}
                     compact={compact}
-                    fouls={playerFouls[p.id] || 0}
+                    fouls={playerPersonalFouls[p.id] || 0}
                   />
                 ))}
               </div>

@@ -137,6 +137,8 @@ export function computePlayerStats(events, players, teams) {
         }
         break;
       case 'foul':
+      case 'foulTech':
+      case 'foulUnsport':
         s.fouls++;
         break;
       case 'assist':
