@@ -673,6 +673,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
           match={startingMatch}
           teamsMap={teamsMap}
           players={players || []}
+          allMatches={matches || []}
           onCancel={() => setStartingMatch(null)}
           onConfirm={confirmStartMatch}
         />

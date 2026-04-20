@@ -237,6 +237,7 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, players = [
           match={startingMatch}
           teamsMap={teamsMap}
           players={players}
+          allMatches={matches}
           onCancel={() => setStartingMatch(null)}
           onConfirm={confirmStartMatch}
         />
