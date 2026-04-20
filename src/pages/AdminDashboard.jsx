@@ -18,6 +18,7 @@ import PostManager from '../components/admin/PostManager';
 import UpdatesManager from '../components/admin/UpdatesManager';
 import UserManager from '../components/admin/UserManager';
 import AuditLog from '../components/admin/AuditLog';
+import SettingsManager from '../components/admin/SettingsManager';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 
 const ALL_TABS = [
@@ -30,6 +31,7 @@ const ALL_TABS = [
   { id: 'scoring', label: 'Planilla en vivo', permission: 'scoring' },
   { id: 'posts', label: 'Instagram', permission: 'posts' },
   { id: 'updates', label: 'Actualizaciones', permission: 'updates' },
+  { id: 'settings', label: 'Ajustes', ownerOnly: true },
   { id: 'users', label: 'Usuarios', ownerOnly: true },
   { id: 'audit', label: 'Auditoria', ownerOnly: true },
 ];
@@ -130,7 +132,8 @@ export default function AdminDashboard() {
           {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} canScoring={canView('scoring')} user={user} />}
           {currentTab === 'scoring' && <ScoringToday matches={matches} teamsMap={teamsMap} courtsMap={courtsMap} players={players} canEdit={canEdit('scoring')} user={user} />}
           {currentTab === 'posts' && <PostManager posts={posts} canEdit={canEdit('posts')} user={user} />}
-          {currentTab === 'updates' && <UpdatesManager isOwner={isOwner} user={user} />}
+          {currentTab === 'updates' && <UpdatesManager isOwner={isOwner} user={user} userDoc={userDoc} />}
+          {currentTab === 'settings' && isOwner && <SettingsManager user={user} />}
           {currentTab === 'users' && isOwner && <UserManager currentUser={user} />}
           {currentTab === 'audit' && isOwner && <AuditLog />}
         </>

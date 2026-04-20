@@ -80,7 +80,7 @@ function RichTextEditor({ value, onChange }) {
   );
 }
 
-function UpdateForm({ initial, onCancel, onSaved, user }) {
+function UpdateForm({ initial, onCancel, onSaved, user, userDoc }) {
   const { toast } = useToast();
   const [title, setTitle] = useState(initial?.title || '');
   const [body, setBody] = useState(initial?.body || '');
@@ -116,6 +116,7 @@ function UpdateForm({ initial, onCancel, onSaved, user }) {
           body,
           publishedAt: serverTimestamp(),
           createdAt: serverTimestamp(),
+          createdByName: userDoc?.displayName || user?.email || null,
           createdByEmail: user?.email || null,
         });
         await logAction(user, 'create', 'updates', ref.id, `Publico actualizacion: ${title.trim()}`);
@@ -182,7 +183,7 @@ function UpdateForm({ initial, onCancel, onSaved, user }) {
   );
 }
 
-export default function UpdatesManager({ isOwner, user }) {
+export default function UpdatesManager({ isOwner, user, userDoc }) {
   const { toast } = useToast();
   const { data: updates, loading } = useUpdates();
   const [showForm, setShowForm] = useState(false);
@@ -219,6 +220,7 @@ export default function UpdatesManager({ isOwner, user }) {
           onCancel={() => setShowForm(false)}
           onSaved={() => setShowForm(false)}
           user={user}
+          userDoc={userDoc}
         />
       )}
 
@@ -228,6 +230,7 @@ export default function UpdatesManager({ isOwner, user }) {
           onCancel={() => setEditingUpdate(null)}
           onSaved={() => setEditingUpdate(null)}
           user={user}
+          userDoc={userDoc}
         />
       )}
 
@@ -248,7 +251,9 @@ export default function UpdatesManager({ isOwner, user }) {
                   </h3>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
                     {formatDateEs(u.publishedAt)}
-                    {u.createdByEmail && <span className="ml-1">· {u.createdByEmail}</span>}
+                    {(u.createdByName || u.createdByEmail) && (
+                      <span className="ml-1">· {u.createdByName || u.createdByEmail}</span>
+                    )}
                   </p>
                 </div>
                 {isOwner && (

@@ -6,6 +6,8 @@ import { useTeams } from '../hooks/useTeams';
 import { usePlayers } from '../hooks/usePlayers';
 import { useCourts } from '../hooks/useCourts';
 import { useMatchClock } from '../hooks/useMatchClock';
+import { useMatchStints } from '../hooks/useMatchStints';
+import { aggregateStintsByPlayer, formatMinutes } from '../lib/stints';
 import PageShell from '../components/layout/PageShell';
 import TeamLogo from '../components/common/TeamLogo';
 import LiveBadge from '../components/common/LiveBadge';
@@ -16,6 +18,9 @@ const EVENT_LABELS = {
   '3pt': { true: '+3', false: '3pts err' },
   'ft': { true: 'TL', false: 'TL err' },
   'foul': 'Falta',
+  'foulTech': 'Falta tecnica',
+  'foulUnsport': 'Falta antideportiva',
+  'ejection': 'Expulsion',
   'assist': 'Asistencia',
   'offRebound': 'Reb. ofensivo',
   'defRebound': 'Reb. defensivo',
@@ -24,13 +29,15 @@ const EVENT_LABELS = {
   'turnover': 'Perdida',
 };
 
+const PERSONAL_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport'];
+
 function getEventLabel(event) {
   const label = EVENT_LABELS[event.type];
   if (typeof label === 'string') return label;
   return label?.[event.made] || event.type;
 }
 
-function computeBoxScore(events, players) {
+function computeBoxScore(events, players, minutesByPlayer = {}) {
   const stats = {};
   players.forEach(p => {
     stats[p.id] = {
@@ -45,6 +52,7 @@ function computeBoxScore(events, players) {
       fouls: 0, assists: 0,
       offReb: 0, defReb: 0, rebounds: 0,
       steals: 0, blocks: 0, turnovers: 0,
+      minutesMs: minutesByPlayer[p.id] || 0,
     };
   });
 
@@ -55,7 +63,11 @@ function computeBoxScore(events, players) {
       case '2pt': s.twoAtt++; if (e.made) { s.twoMade++; s.points += 2; } break;
       case '3pt': s.threeAtt++; if (e.made) { s.threeMade++; s.points += 3; } break;
       case 'ft': s.ftAtt++; if (e.made) { s.ftMade++; s.points += 1; } break;
-      case 'foul': s.fouls++; break;
+      case 'foul':
+      case 'foulTech':
+      case 'foulUnsport':
+        s.fouls++;
+        break;
       case 'assist': s.assists++; break;
       case 'offRebound': s.offReb++; s.rebounds++; break;
       case 'defRebound': s.defReb++; s.rebounds++; break;
@@ -67,7 +79,7 @@ function computeBoxScore(events, players) {
 
   return Object.values(stats).filter(s =>
     s.points || s.twoAtt || s.threeAtt || s.ftAtt || s.fouls ||
-    s.assists || s.rebounds || s.steals || s.blocks || s.turnovers
+    s.assists || s.rebounds || s.steals || s.blocks || s.turnovers || s.minutesMs
   ).sort((a, b) => b.points - a.points);
 }
 
@@ -77,6 +89,7 @@ function BoxScoreTable({ title, team, playerStats }) {
   const cols = [
     { key: 'number', label: '#', align: 'center' },
     { key: 'name', label: 'Jugador', align: 'left' },
+    { key: 'min', label: 'MIN', align: 'center', format: s => s.minutesMs ? formatMinutes(s.minutesMs) : '—' },
     { key: 'points', label: 'Pts', align: 'center', bold: true },
     { key: 'two', label: '2P', align: 'center', format: s => `${s.twoMade}/${s.twoAtt}` },
     { key: 'three', label: '3P', align: 'center', format: s => `${s.threeMade}/${s.threeAtt}` },
@@ -183,6 +196,7 @@ export default function MatchDetailPage() {
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: allPlayers, loading: playersLoading } = usePlayers();
   const { data: courts, loading: courtsLoading } = useCourts();
+  const { data: stints } = useMatchStints(matchId);
 
   const { homeTeam, awayTeam, homePlayers, awayPlayers, court } = useMemo(() => {
     if (!match) return { homeTeam: null, awayTeam: null, homePlayers: [], awayPlayers: [], court: null };
@@ -199,15 +213,20 @@ export default function MatchDetailPage() {
     };
   }, [match, teams, allPlayers, courts]);
 
+  const minutesByPlayer = useMemo(() => aggregateStintsByPlayer(stints), [stints]);
+
   const { homeStats, awayStats } = useMemo(() => {
-    if (!match || events.length === 0) return { homeStats: [], awayStats: [] };
+    if (!match) return { homeStats: [], awayStats: [] };
+    if (events.length === 0 && Object.keys(minutesByPlayer).length === 0) {
+      return { homeStats: [], awayStats: [] };
+    }
     const homeEvents = events.filter(e => e.teamId === match.homeTeamId);
     const awayEvents = events.filter(e => e.teamId === match.awayTeamId);
     return {
-      homeStats: computeBoxScore(homeEvents, homePlayers),
-      awayStats: computeBoxScore(awayEvents, awayPlayers),
+      homeStats: computeBoxScore(homeEvents, homePlayers, minutesByPlayer),
+      awayStats: computeBoxScore(awayEvents, awayPlayers, minutesByPlayer),
     };
-  }, [match, events, homePlayers, awayPlayers]);
+  }, [match, events, homePlayers, awayPlayers, minutesByPlayer]);
 
   const { mmss: clockMmss, running: clockRunning } = useMatchClock(match);
 
@@ -231,7 +250,7 @@ export default function MatchDetailPage() {
 
   const currentQuarter = match.quarter || 1;
   const teamFoulsQ = (teamId) =>
-    events.filter(e => e.type === 'foul' && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
+    events.filter(e => PERSONAL_FOUL_TYPES.includes(e.type) && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
   const homeTeamFouls = isLive ? teamFoulsQ(match.homeTeamId) : 0;
   const awayTeamFouls = isLive ? teamFoulsQ(match.awayTeamId) : 0;
   const homeTO = !!(match.timeouts?.home?.[currentQuarter]);

@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, doc, updateDoc, writeBatch, increment, serverTimestamp, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { collection, doc, updateDoc, writeBatch, increment, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import { logStatsParticipation } from '../../lib/audit';
 import { useToast } from '../../context/ToastContext';
 import { useMatchClock, defaultQuarterMs, pausedRemainingFromMatch, formatClock } from '../../hooks/useMatchClock';
+import { closeOpenStintToBatch, buildOpenStint } from '../../lib/stints';
 
 const EVENT_BUTTONS = [
   { type: '2pt', label: '+2', made: true, points: 2, color: 'var(--color-success)' },
@@ -103,16 +104,20 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     if (!canEdit) return;
     if (running && remainingMs <= 0 && !autoStoppedRef.current) {
       autoStoppedRef.current = true;
-      updateDoc(doc(db, 'matches', match.id), {
+      const batch = writeBatch(db);
+      closeOpenStintToBatch(batch, db, match);
+      batch.update(doc(db, 'matches', match.id), {
         clockRunning: false,
         clockRemainingMs: 0,
         clockStartedAt: null,
-      }).then(() => {
+        currentStint: null,
+      });
+      batch.commit().then(() => {
         toast.warning(`Fin del cuarto Q${match.quarter || 1}`);
       });
     }
     if (!running || remainingMs > 0) autoStoppedRef.current = false;
-  }, [running, remainingMs, canEdit, match.id, match.quarter, toast]);
+  }, [running, remainingMs, canEdit, match, toast]);
 
   const allPlayers = [...homePlayers, ...awayPlayers];
   const getPlayerLabel = (id) => {
@@ -182,9 +187,25 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       toast.warning(`Maximo ${MAX_ON_COURT} jugadores en cancha. Sacar uno primero.`);
       return;
     }
-    await updateDoc(doc(db, 'matches', match.id), {
-      [field]: isOn ? arrayRemove(playerId) : arrayUnion(playerId),
-    });
+    const newIds = isOn ? currentIds.filter(id => id !== playerId) : [...currentIds, playerId];
+    const batch = writeBatch(db);
+    const clockIsRunning = !!match.clockRunning && !!match.currentStint;
+    const updates = { [field]: newIds };
+    if (clockIsRunning) {
+      closeOpenStintToBatch(batch, db, match);
+      const newHomeIds = side === 'home' ? newIds : onCourtHomeIds;
+      const newAwayIds = side === 'away' ? newIds : onCourtAwayIds;
+      const base = pausedRemainingFromMatch(match);
+      const players = [
+        ...newHomeIds.map(id => ({ playerId: id, teamId: match.homeTeamId })),
+        ...newAwayIds.map(id => ({ playerId: id, teamId: match.awayTeamId })),
+      ];
+      updates.currentStint = buildOpenStint(base, match.quarter || 1, players);
+      updates.clockRemainingMs = base;
+      updates.clockStartedAt = Date.now();
+    }
+    batch.update(doc(db, 'matches', match.id), updates);
+    await batch.commit();
   };
 
   const addEvent = async (side, eventDef) => {
@@ -231,7 +252,24 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
 
     if (willBeEjected) {
       const courtField = side === 'home' ? 'onCourtHome' : 'onCourtAway';
-      batch.update(doc(db, 'matches', match.id), { [courtField]: arrayRemove(playerId) });
+      const currentIds = side === 'home' ? onCourtHomeIds : onCourtAwayIds;
+      const newIds = currentIds.filter(id => id !== playerId);
+      const matchUpdates = { [courtField]: newIds };
+      const clockIsRunning = !!match.clockRunning && !!match.currentStint;
+      if (clockIsRunning) {
+        closeOpenStintToBatch(batch, db, match);
+        const newHomeIds = side === 'home' ? newIds : onCourtHomeIds;
+        const newAwayIds = side === 'away' ? newIds : onCourtAwayIds;
+        const base = pausedRemainingFromMatch(match);
+        const remainingPlayers = [
+          ...newHomeIds.map(id => ({ playerId: id, teamId: match.homeTeamId })),
+          ...newAwayIds.map(id => ({ playerId: id, teamId: match.awayTeamId })),
+        ];
+        matchUpdates.currentStint = buildOpenStint(base, match.quarter || 1, remainingPlayers);
+        matchUpdates.clockRemainingMs = base;
+        matchUpdates.clockStartedAt = Date.now();
+      }
+      batch.update(doc(db, 'matches', match.id), matchUpdates);
     }
 
     await batch.commit();
@@ -268,12 +306,16 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   };
 
   const updateQuarter = async (q) => {
-    await updateDoc(doc(db, 'matches', match.id), {
+    const batch = writeBatch(db);
+    closeOpenStintToBatch(batch, db, match);
+    batch.update(doc(db, 'matches', match.id), {
       quarter: q,
       clockRunning: false,
       clockRemainingMs: defaultQuarterMs(q),
       clockStartedAt: null,
+      currentStint: null,
     });
+    await batch.commit();
     if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
   };
 
@@ -281,21 +323,30 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     if (!canEdit) return;
     if (running) {
       const remaining = pausedRemainingFromMatch(match);
-      await updateDoc(doc(db, 'matches', match.id), {
+      const batch = writeBatch(db);
+      closeOpenStintToBatch(batch, db, match);
+      batch.update(doc(db, 'matches', match.id), {
         clockRunning: false,
         clockRemainingMs: remaining,
         clockStartedAt: null,
+        currentStint: null,
       });
+      await batch.commit();
     } else {
       const base = typeof match.clockRemainingMs === 'number' ? match.clockRemainingMs : defaultQuarterMs(match.quarter || 1);
       if (base <= 0) {
         toast.info('El reloj esta en 00:00. Modificalo antes de iniciar.');
         return;
       }
+      const players = [
+        ...onCourtHomeIds.map(id => ({ playerId: id, teamId: match.homeTeamId })),
+        ...onCourtAwayIds.map(id => ({ playerId: id, teamId: match.awayTeamId })),
+      ];
       await updateDoc(doc(db, 'matches', match.id), {
         clockRunning: true,
         clockRemainingMs: base,
         clockStartedAt: Date.now(),
+        currentStint: buildOpenStint(base, match.quarter || 1, players),
       });
     }
   };
@@ -322,11 +373,15 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       toast.error('Formato invalido. Usa MM:SS o solo minutos.');
       return;
     }
-    await updateDoc(doc(db, 'matches', match.id), {
+    const batch = writeBatch(db);
+    closeOpenStintToBatch(batch, db, match);
+    batch.update(doc(db, 'matches', match.id), {
       clockRunning: false,
       clockRemainingMs: ms,
       clockStartedAt: null,
+      currentStint: null,
     });
+    await batch.commit();
     setEditingClock(false);
   };
 

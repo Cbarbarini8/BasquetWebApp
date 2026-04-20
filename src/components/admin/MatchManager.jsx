@@ -5,6 +5,7 @@ import { db } from '../../lib/firebase';
 import { logAction, logStatsParticipation } from '../../lib/audit';
 import { useToast } from '../../context/ToastContext';
 import StartMatchModal from './StartMatchModal';
+import { closeOpenStintToBatch } from '../../lib/stints';
 import { getMatchProximityToNow } from '../../lib/utils';
 import { IconButton, EditIcon, DeleteIcon, PlayIcon, StopIcon, CalendarIcon, ClipboardIcon, UndoIcon } from '../common/Icons';
 
@@ -125,6 +126,9 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
     if (!window.confirm(`Eliminar TODAS las estadisticas de este partido (${events.length} eventos)?`)) return;
     const batch = writeBatch(db);
     events.forEach(e => batch.delete(doc(db, `matches/${match.id}/events`, e.id)));
+    const stintsSnap = await getDocs(collection(db, `matches/${match.id}/playerStints`));
+    stintsSnap.docs.forEach(d => batch.delete(d.ref));
+    batch.update(doc(db, 'matches', match.id), { currentStint: null });
     await batch.commit();
     await logAction(user, 'delete', 'matches', match.id, `Limpio estadisticas: ${home} vs ${away} (${events.length} eventos)`);
     setEvents([]);
@@ -552,18 +556,27 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
 
   const finishMatch = async (matchId) => {
     if (!window.confirm('Finalizar este partido?')) return;
-    await updateDoc(doc(db, 'matches', matchId), {
+    const m = matches.find(x => x.id === matchId);
+    const batch = writeBatch(db);
+    if (m) closeOpenStintToBatch(batch, db, m);
+    batch.update(doc(db, 'matches', matchId), {
       status: 'finished',
       finishedAt: serverTimestamp(),
+      clockRunning: false,
+      clockStartedAt: null,
+      currentStint: null,
     });
+    await batch.commit();
     await logAction(user, 'finish', 'matches', matchId, `Finalizo partido: ${getMatchLabel(matchId)}`);
   };
 
   const resetMatch = async (matchId) => {
     if (!window.confirm('Resetear este partido a programado? Se eliminaran todas las estadisticas cargadas.')) return;
     const eventsSnap = await getDocs(collection(db, `matches/${matchId}/events`));
+    const stintsSnap = await getDocs(collection(db, `matches/${matchId}/playerStints`));
     const batch = writeBatch(db);
     eventsSnap.docs.forEach(d => batch.delete(d.ref));
+    stintsSnap.docs.forEach(d => batch.delete(d.ref));
     batch.update(doc(db, 'matches', matchId), {
       status: 'scheduled',
       homeScore: 0,
@@ -578,6 +591,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       clockRunning: false,
       clockRemainingMs: 10 * 60 * 1000,
       clockStartedAt: null,
+      currentStint: null,
     });
     await batch.commit();
     await logAction(user, 'reset', 'matches', matchId, `Reseteo partido: ${getMatchLabel(matchId)} (${eventsSnap.size} eventos eliminados)`);

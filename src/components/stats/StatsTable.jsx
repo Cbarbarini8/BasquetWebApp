@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import TeamLogo from '../common/TeamLogo';
+import { useDocument } from '../../hooks/useDocument';
 
 function PlayerPhoto({ url, name, size = 28 }) {
   if (!url) {
@@ -39,6 +40,12 @@ export default function StatsTable({ stats, teams = [] }) {
   const [sortKey, setSortKey] = useState('points');
   const [sortDir, setSortDir] = useState('desc');
   const [filterTeam, setFilterTeam] = useState('');
+  const { data: statsConfig } = useDocument('config/stats');
+
+  const visibleColumns = useMemo(() => {
+    const hidden = new Set(statsConfig?.hiddenColumns || []);
+    return COLUMNS.filter(col => !hidden.has(col.key));
+  }, [statsConfig]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -88,7 +95,7 @@ export default function StatsTable({ stats, teams = [] }) {
         <table className="w-full text-sm">
           <thead>
             <tr style={{ backgroundColor: 'var(--color-table-header)', color: '#ffffff' }}>
-              {COLUMNS.map(col => (
+              {visibleColumns.map(col => (
                 <th
                   key={col.key}
                   onClick={() => !col.noSort && handleSort(col.key)}
@@ -113,7 +120,7 @@ export default function StatsTable({ stats, teams = [] }) {
                   borderBottom: '1px solid var(--color-border)',
                 }}
               >
-                {COLUMNS.map(col => (
+                {visibleColumns.map(col => (
                   <td
                     key={col.key}
                     className={`px-2 py-2.5 whitespace-nowrap ${
