@@ -1,12 +1,11 @@
 import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useDocument } from '../hooks/useDocument';
-import { useMatchEvents } from '../hooks/useMatchEvents';
 import { useTeams } from '../hooks/useTeams';
 import { usePlayers } from '../hooks/usePlayers';
 import { useCourts } from '../hooks/useCourts';
 import { useMatchClock } from '../hooks/useMatchClock';
-import { useMatchStints } from '../hooks/useMatchStints';
+import { useMatchDetailData } from '../hooks/useMatchDetailData';
 import { aggregateStintsByPlayer, formatMinutes } from '../lib/stints';
 import PageShell from '../components/layout/PageShell';
 import TeamLogo from '../components/common/TeamLogo';
@@ -192,11 +191,10 @@ function EventLog({ events, players, homeTeamId }) {
 export default function MatchDetailPage() {
   const { matchId } = useParams();
   const { data: match, loading: matchLoading } = useDocument(`matches/${matchId}`);
-  const { data: events, loading: eventsLoading } = useMatchEvents(matchId);
+  const { events, stints, loading: detailLoading } = useMatchDetailData(match);
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: allPlayers, loading: playersLoading } = usePlayers();
   const { data: courts, loading: courtsLoading } = useCourts();
-  const { data: stints } = useMatchStints(matchId);
 
   const { homeTeam, awayTeam, homePlayers, awayPlayers, court } = useMemo(() => {
     if (!match) return { homeTeam: null, awayTeam: null, homePlayers: [], awayPlayers: [], court: null };
@@ -230,7 +228,7 @@ export default function MatchDetailPage() {
 
   const { mmss: clockMmss, running: clockRunning } = useMatchClock(match);
 
-  const loading = matchLoading || eventsLoading || teamsLoading || playersLoading || courtsLoading;
+  const loading = matchLoading || detailLoading || teamsLoading || playersLoading || courtsLoading;
 
   if (loading) return <PageShell><LoadingSpinner /></PageShell>;
 

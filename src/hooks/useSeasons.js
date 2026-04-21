@@ -1,6 +1,5 @@
-import { orderBy } from 'firebase/firestore';
-import { useCollection } from './useCollection';
+import { useData } from '../context/DataContext';
 
 export function useSeasons() {
-  return useCollection('seasons', [orderBy('createdAt', 'desc')]);
+  return useData().seasons;
 }

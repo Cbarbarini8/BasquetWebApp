@@ -2,12 +2,18 @@ import { useState, useEffect } from 'react';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 
-export function useCollection(collectionPath, queryConstraints = []) {
+export function useCollection(collectionPath, queryConstraints = [], enabled = true) {
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    if (!enabled) {
+      setData([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     const colRef = collection(db, collectionPath);
     const q = queryConstraints.length > 0 ? query(colRef, ...queryConstraints) : colRef;
 
@@ -29,7 +35,7 @@ export function useCollection(collectionPath, queryConstraints = []) {
     );
 
     return () => unsubscribe();
-  }, [collectionPath, JSON.stringify(queryConstraints)]);
+  }, [collectionPath, JSON.stringify(queryConstraints), enabled]);
 
   return { data, loading, error };
 }

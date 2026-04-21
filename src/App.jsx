@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { DataProvider } from './context/DataContext';
 import Navbar from './components/layout/Navbar';
 import ProtectedRoute from './components/layout/ProtectedRoute';
 import FixturePage from './pages/FixturePage';
@@ -20,6 +21,7 @@ export default function App() {
       <ThemeProvider>
         <AuthProvider>
           <ToastProvider>
+          <DataProvider>
           <div className="min-h-screen" style={{ backgroundColor: 'var(--color-bg)' }}>
             <Navbar />
             <Routes>
@@ -34,6 +36,7 @@ export default function App() {
               <Route path="/admin/match/:matchId" element={<ProtectedRoute><AdminMatchPage /></ProtectedRoute>} />
             </Routes>
           </div>
+          </DataProvider>
           </ToastProvider>
         </AuthProvider>
       </ThemeProvider>

@@ -21,7 +21,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run build` — Production build (outputs to `dist/`)
 - `npm run lint` — ESLint
 - `npm run preview` — Preview production build locally
-- `npm run build && firebase deploy --only hosting` — Deploy to production
+- `npm run build && firebase deploy --only hosting` — Deploy app to production
+- `firebase deploy --only firestore:rules` — Deploy Firestore security rules (versioned in `firestore.rules`)
+- `npm run build && firebase deploy --only hosting,firestore:rules` — Full deploy (app + rules)
 - No test framework — no unit or integration tests exist
 
 ## Architecture
@@ -34,18 +36,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Firestore Collections
 - `teams` — name, shortName, logoUrl (Cloudinary)
-- `players` — firstName, lastName, number, teamId, photoUrl, photoStatus, uploadToken
-- `matches` — round, homeTeamId, awayTeamId, homeScore, awayScore, status (scheduled/live/finished), quarter, scheduledDate, scheduledTime, courtId, seasonId
+- `players` — firstName, lastName, number, teamId, photoUrl, photoStatus, uploadToken, pendingPhotoUrl (self-upload pending approval)
+- `matches` — round, homeTeamId, awayTeamId, homeScore, awayScore, status (scheduled/live/finished), quarter, scheduledDate, scheduledTime, courtId, seasonId. Clock/stint fields: `clockRunning`, `clockRemainingMs`, `clockStartedAt`, `currentStint` (open stint embedded — see Match Clock section)
 - `matches/{id}/events` — type, playerId, teamId, quarter, made (subcollection)
+- `matches/{id}/playerStints` — closed time-on-court stints: playerId, teamId, quarter, startClockMs, endClockMs, durationMs, createdAt (subcollection)
 - `seasons` — name, active (bool), createdAt
 - `courts` — name, mapsUrl
 - `users` — email, displayName, role (owner/admin), permissions (object), active
 - `posts` — url (Instagram), thumbnailUrl (Cloudinary), order, createdAt
 - `auditLog` — userId, userEmail, action, collection, documentId, description, timestamp
+- `updates`, `config` — misc app state (rules permit authenticated writes)
 
 ### Event types
 Scoring: `2pt`, `3pt`, `ft` (with `made: true/false`)
-Other: `foul`, `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
+Fouls: `foul` (personal — 5th ejects from match but does NOT suspend), `foulTech` (technical), `foulUnsport` (unsportsmanlike), `ejection` (direct expulsion)
+Other: `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
 
 ### Routes (in `App.jsx`)
 - `/` — Fixture (home), `/standings`, `/stats`, `/gallery` — Public pages
@@ -87,6 +92,28 @@ In `LiveScoring.jsx`, every scoring change touches two places in one `writeBatch
 2. Increment/decrement `homeScore`/`awayScore` on the match doc (denormalized)
 
 Undo must reverse **both**. If you add new event mutations, preserve this pairing or the denormalized score will drift from the event log. Audit log is written after the batch commits.
+
+### Match Clock & Stints (time-on-court)
+Clock model (`src/hooks/useMatchClock.js`): the clock is `clockRemainingMs` (base) + optional `clockStartedAt` (epoch ms). If `clockRunning` is true, current remaining = `base - (now - clockStartedAt)`. Defaults: 10 min per regular quarter, 5 min per overtime (Q5+). Use `pausedRemainingFromMatch(match)` to freeze the clock deterministically into a single ms value.
+
+Stint model (`src/lib/stints.js`): `match.currentStint` (on match doc) represents the **open** stint — `{ startClockMs, quarter, startedAt, players: [{playerId, teamId}] }` or null. Closed stints go into the `playerStints` subcollection with `durationMs`. `usePlayerStats` / stats UI aggregate via `aggregateStintsByPlayer`.
+
+**Stint closing contract**: any action that changes who's on court, pauses the clock, changes quarter, edits the clock, or finishes the match **must close the open stint** via `closeOpenStintToBatch(batch, db, match)` in the same batch that mutates the match doc. Skipping this drifts minute totals from actual elapsed time. Grep existing usages in `LiveScoring.jsx` before adding new clock/lineup mutations.
+
+### Automatic Suspensions
+`src/lib/suspensions.js` computes next-match suspensions from the previous match's events:
+- **2 flagrant fouls** (`foulTech` + `foulUnsport` combined) → suspended next match
+- **`ejection`** (direct expulsion) → suspended next match
+- 5 personal fouls eject from the current match but do NOT suspend
+
+`findPreviousFinishedMatch(allMatches, currentMatch, teamId)` resolves "previous match" as the most recent `status === 'finished'` match for the team in the **same season**, ordered by `scheduledDate` desc, tie-broken by `createdAt`. `StartMatchModal` uses this to surface suspended players at match start.
+
+### Firestore Rules
+`firestore.rules` is versioned in the repo. Two non-trivial rules:
+- `players`: unauthenticated users can update **only** `pendingPhotoUrl` + `photoStatus` — this powers the token-based self-upload flow at `/jugador/foto/:token` (admin approves to promote to `photoUrl`).
+- `auditLog`: create-only for authenticated users; no updates or deletes.
+
+After editing rules, deploy separately with `firebase deploy --only firestore:rules` (hosting deploy does NOT push rules).
 
 ### Permission Check Order
 `useUserRole.hasPermission` checks in this specific order — preserve it:

@@ -1,6 +1,5 @@
-import { orderBy } from 'firebase/firestore';
-import { useCollection } from './useCollection';
+import { useData } from '../context/DataContext';
 
 export function useTeams() {
-  return useCollection('teams', [orderBy('name')]);
+  return useData().teams;
 }

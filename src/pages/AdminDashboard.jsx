@@ -36,16 +36,75 @@ const ALL_TABS = [
   { id: 'audit', label: 'Auditoria', ownerOnly: true },
 ];
 
+// Cada tab "pesada" monta sus hooks adentro: al cambiar de tab, el wrapper se
+// desmonta y sus listeners se cierran. Tabs que solo usan datos cuasi-estaticos
+// (teams/courts/seasons, ya compartidos via DataProvider) reciben props directo.
+
+function PlayersTab({ canEdit, user, teams }) {
+  const { data: players, loading } = usePlayers();
+  if (loading) return <LoadingSpinner />;
+  return <PlayerForm players={players} teams={teams} canEdit={canEdit} user={user} />;
+}
+
+function FixtureTab({ canEdit, user, teams, activeSeason }) {
+  const { data: matches, loading } = useMatches(activeSeason?.id);
+  if (loading) return <LoadingSpinner />;
+  return <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit} user={user} />;
+}
+
+function MatchesTab({ canEdit, canScoring, user, teams, courts, activeSeason }) {
+  const { data: players, loading: playersLoading } = usePlayers();
+  const { data: matches, loading: matchesLoading } = useMatches(activeSeason?.id);
+  const teamsMap = useMemo(() => Object.fromEntries(teams.map(t => [t.id, t])), [teams]);
+  const courtsMap = useMemo(() => Object.fromEntries(courts.map(c => [c.id, c])), [courts]);
+  if (playersLoading || matchesLoading) return <LoadingSpinner />;
+  return (
+    <MatchManager
+      matches={matches}
+      teamsMap={teamsMap}
+      teams={teams}
+      players={players}
+      courts={courts}
+      courtsMap={courtsMap}
+      seasonId={activeSeason?.id}
+      canEdit={canEdit}
+      canScoring={canScoring}
+      user={user}
+    />
+  );
+}
+
+function ScoringTab({ canEdit, user, teams, courts, activeSeason }) {
+  const { data: players, loading: playersLoading } = usePlayers();
+  const { data: matches, loading: matchesLoading } = useMatches(activeSeason?.id);
+  const teamsMap = useMemo(() => Object.fromEntries(teams.map(t => [t.id, t])), [teams]);
+  const courtsMap = useMemo(() => Object.fromEntries(courts.map(c => [c.id, c])), [courts]);
+  if (playersLoading || matchesLoading) return <LoadingSpinner />;
+  return (
+    <ScoringToday
+      matches={matches}
+      teamsMap={teamsMap}
+      courtsMap={courtsMap}
+      players={players}
+      canEdit={canEdit}
+      user={user}
+    />
+  );
+}
+
+function PostsTab({ canEdit, user }) {
+  const { data: posts, loading } = usePosts();
+  if (loading) return <LoadingSpinner />;
+  return <PostManager posts={posts} canEdit={canEdit} user={user} />;
+}
+
 export default function AdminDashboard() {
   const { user, userDoc, logout, isOwner, canView, canEdit } = useAuth();
   const { data: teams, loading: teamsLoading } = useTeams();
-  const { data: players, loading: playersLoading } = usePlayers();
   const { data: seasons, loading: seasonsLoading } = useSeasons();
   const { data: courts, loading: courtsLoading } = useCourts();
-  const { data: posts, loading: postsLoading } = usePosts();
 
   const activeSeason = useMemo(() => seasons.find(s => s.active) || null, [seasons]);
-  const { data: matches, loading: matchesLoading } = useMatches(activeSeason?.id);
 
   const visibleTabs = useMemo(() => {
     return ALL_TABS.filter(tab => {
@@ -57,19 +116,7 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState(null);
   const currentTab = activeTab || visibleTabs[0]?.id;
 
-  const teamsMap = useMemo(() => {
-    const map = {};
-    teams.forEach(t => { map[t.id] = t; });
-    return map;
-  }, [teams]);
-
-  const courtsMap = useMemo(() => {
-    const map = {};
-    courts.forEach(c => { map[c.id] = c; });
-    return map;
-  }, [courts]);
-
-  const loading = teamsLoading || playersLoading || matchesLoading || seasonsLoading || courtsLoading || postsLoading;
+  const loading = teamsLoading || seasonsLoading || courtsLoading;
 
   return (
     <PageShell>
@@ -126,12 +173,12 @@ export default function AdminDashboard() {
         <>
           {currentTab === 'seasons' && <SeasonForm seasons={seasons} canEdit={canEdit('seasons')} user={user} />}
           {currentTab === 'teams' && <TeamForm teams={teams} canEdit={canEdit('teams')} user={user} />}
-          {currentTab === 'players' && <PlayerForm players={players} teams={teams} canEdit={canEdit('players')} user={user} />}
+          {currentTab === 'players' && <PlayersTab teams={teams} canEdit={canEdit('players')} user={user} />}
           {currentTab === 'courts' && <CourtForm courts={courts} canEdit={canEdit('courts')} user={user} />}
-          {currentTab === 'fixture' && <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit('fixture')} user={user} />}
-          {currentTab === 'matches' && <MatchManager matches={matches} teamsMap={teamsMap} teams={teams} players={players} courts={courts} courtsMap={courtsMap} seasonId={activeSeason?.id} canEdit={canEdit('matches')} canScoring={canView('scoring')} user={user} />}
-          {currentTab === 'scoring' && <ScoringToday matches={matches} teamsMap={teamsMap} courtsMap={courtsMap} players={players} canEdit={canEdit('scoring')} user={user} />}
-          {currentTab === 'posts' && <PostManager posts={posts} canEdit={canEdit('posts')} user={user} />}
+          {currentTab === 'fixture' && <FixtureTab teams={teams} activeSeason={activeSeason} canEdit={canEdit('fixture')} user={user} />}
+          {currentTab === 'matches' && <MatchesTab teams={teams} courts={courts} activeSeason={activeSeason} canEdit={canEdit('matches')} canScoring={canView('scoring')} user={user} />}
+          {currentTab === 'scoring' && <ScoringTab teams={teams} courts={courts} activeSeason={activeSeason} canEdit={canEdit('scoring')} user={user} />}
+          {currentTab === 'posts' && <PostsTab canEdit={canEdit('posts')} user={user} />}
           {currentTab === 'updates' && <UpdatesManager isOwner={isOwner} user={user} userDoc={userDoc} />}
           {currentTab === 'settings' && isOwner && <SettingsManager user={user} />}
           {currentTab === 'users' && isOwner && <UserManager currentUser={user} />}
