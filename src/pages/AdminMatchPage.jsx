@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useDocument } from '../hooks/useDocument';
@@ -18,6 +18,24 @@ export default function AdminMatchPage() {
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: allPlayers, loading: playersLoading } = usePlayers();
   const compact = useIsCompactScoring();
+
+  // En compact, bloqueamos scroll de html/body para que el LiveScoring ocupe exactamente el viewport.
+  useEffect(() => {
+    if (!compact) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyOverscroll = body.style.overscrollBehavior;
+    html.style.overflow = 'hidden';
+    body.style.overflow = 'hidden';
+    body.style.overscrollBehavior = 'none';
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.overscrollBehavior = prevBodyOverscroll;
+    };
+  }, [compact]);
 
   const { homeTeam, awayTeam, homePlayers, awayPlayers } = useMemo(() => {
     if (!match) return { homeTeam: null, awayTeam: null, homePlayers: [], awayPlayers: [] };
@@ -73,7 +91,10 @@ export default function AdminMatchPage() {
 
   if (compact) {
     return (
-      <div className="px-2 py-1">
+      <div
+        className="flex flex-col overflow-hidden"
+        style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
+      >
         {scoringNode}
       </div>
     );

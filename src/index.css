@@ -137,3 +137,33 @@ button, select {
 .rich-content em, .rich-editor em, .rich-content i, .rich-editor i { font-style: italic; }
 .rich-content u, .rich-editor u { text-decoration: underline; }
 .rich-content a, .rich-editor a { color: var(--color-primary); text-decoration: underline; }
+
+/* ===== Scoring compacto: feedback de evento armado ===== */
+@keyframes scoring-armed-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--color-primary), 0 0 0 4px rgba(37, 99, 235, 0.25); }
+  50%      { box-shadow: 0 0 0 2px var(--color-primary), 0 0 0 8px rgba(37, 99, 235, 0.05); }
+}
+.scoring-armed {
+  animation: scoring-armed-pulse 1.4s ease-in-out infinite;
+}
+@keyframes scoring-armed-btn-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px #ffffff, 0 0 0 6px var(--color-primary); }
+  50%      { box-shadow: 0 0 0 3px #ffffff, 0 0 0 10px rgba(37, 99, 235, 0.2); }
+}
+.scoring-armed-btn {
+  animation: scoring-armed-btn-pulse 1.4s ease-in-out infinite;
+}
+@keyframes scoring-float-up {
+  0%   { transform: translate(-50%, 0); opacity: 1; }
+  100% { transform: translate(-50%, -30px); opacity: 0; }
+}
+.scoring-float-up {
+  animation: scoring-float-up 0.7s ease-out forwards;
+}
+@keyframes scoring-sheet-slide {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+.scoring-sheet {
+  animation: scoring-sheet-slide 0.22s ease-out;
+}

@@ -6,24 +6,30 @@ import { logStatsParticipation } from '../../lib/audit';
 import { useToast } from '../../context/ToastContext';
 import { useMatchClock, defaultQuarterMs, pausedRemainingFromMatch, formatClock } from '../../hooks/useMatchClock';
 import { closeOpenStintToBatch, buildOpenStint } from '../../lib/stints';
+import CompactScoringUI from './CompactScoringUI';
 
+// Orden 4x4 por categoria con paleta familia:
+// Fila 1: anotacion encestada + asistencia (vibrantes positivos)
+// Fila 2: errados + perdida (escala de grises)
+// Fila 3: defensa / recuperacion (teal/cian)
+// Fila 4: faltas (alarma escalada: naranja -> rojo -> negro)
 const EVENT_BUTTONS = [
   { type: '2pt', label: '+2', made: true, points: 2, color: 'var(--color-success)' },
-  { type: '2pt', label: '2 Err', made: false, points: 0, color: '#6b7280' },
   { type: '3pt', label: '+3', made: true, points: 3, color: 'var(--color-primary)' },
-  { type: '3pt', label: '3 Err', made: false, points: 0, color: '#6b7280' },
   { type: 'ft', label: 'TL', made: true, points: 1, color: 'var(--color-accent)' },
-  { type: 'ft', label: 'TL Err', made: false, points: 0, color: '#6b7280' },
-  { type: 'foul', label: 'Falta', color: 'var(--color-danger)' },
+  { type: 'assist', label: 'Asist', color: '#8b5cf6' },
+  { type: '2pt', label: '2 Err', made: false, points: 0, color: '#9ca3af' },
+  { type: '3pt', label: '3 Err', made: false, points: 0, color: '#6b7280' },
+  { type: 'ft', label: 'TL Err', made: false, points: 0, color: '#4b5563' },
+  { type: 'turnover', label: 'Perdida', color: '#374151' },
+  { type: 'defRebound', label: 'Reb Def', color: '#0d9488' },
+  { type: 'offRebound', label: 'Reb Of', color: '#0891b2' },
+  { type: 'steal', label: 'Robo', color: '#0284c7' },
+  { type: 'block', label: 'Tapon', color: '#0369a1' },
+  { type: 'foul', label: 'Falta', color: '#f97316' },
   { type: 'foulTech', label: 'F. Tec', color: '#ea580c' },
   { type: 'foulUnsport', label: 'F. Anti', color: '#b91c1c' },
   { type: 'ejection', label: 'Expul', color: '#18181b' },
-  { type: 'assist', label: 'Asist', color: '#8b5cf6' },
-  { type: 'offRebound', label: 'Reb Of', color: '#0891b2' },
-  { type: 'defRebound', label: 'Reb Def', color: '#0d9488' },
-  { type: 'steal', label: 'Robo', color: '#059669' },
-  { type: 'block', label: 'Tapon', color: '#7c3aed' },
-  { type: 'turnover', label: 'Perdida', color: '#dc2626' },
 ];
 
 const EVENT_LABELS = {
@@ -208,8 +214,8 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     await batch.commit();
   };
 
-  const addEvent = async (side, eventDef) => {
-    const playerId = selectedPlayer[side];
+  const addEvent = async (side, eventDef, overridePlayerId) => {
+    const playerId = overridePlayerId || selectedPlayer[side];
     if (!playerId) {
       toast.info('Selecciona un jugador primero');
       return;
@@ -560,7 +566,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
 
         {/* Botones de eventos (solo modo no compacto; en compacto estan al lado de los jerseys) */}
         {canEdit && !isEditing && !compact && (
-          <div className="grid grid-cols-3 gap-1.5 mb-4">
+          <div className="grid grid-cols-4 gap-1.5 mb-4">
             {EVENT_BUTTONS.map((btn, idx) => (
               <button
                 key={idx}
@@ -630,6 +636,47 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       </div>
     );
   };
+
+  if (compact) {
+    return (
+      <CompactScoringUI
+        match={match}
+        events={events}
+        homeTeam={homeTeam}
+        awayTeam={awayTeam}
+        homePlayers={homePlayers}
+        awayPlayers={awayPlayers}
+        onCourtHomePlayers={onCourtHomePlayers}
+        onCourtAwayPlayers={onCourtAwayPlayers}
+        onCourtHomeIds={onCourtHomeIds}
+        onCourtAwayIds={onCourtAwayIds}
+        eventButtons={EVENT_BUTTONS}
+        eventLabel={getEventLabel}
+        playerPersonalFouls={playerPersonalFouls}
+        homeTeamFouls={homeTeamFouls}
+        awayTeamFouls={awayTeamFouls}
+        ejectionReason={ejectionReason}
+        canEdit={canEdit}
+        mmss={mmss}
+        remainingMs={remainingMs}
+        running={running}
+        editingClock={editingClock}
+        clockInput={clockInput}
+        onClockInputChange={setClockInput}
+        onOpenClockEdit={openClockEdit}
+        onSaveClockEdit={saveClockEdit}
+        onCancelClockEdit={() => setEditingClock(false)}
+        onToggleClock={toggleClock}
+        onUpdateQuarter={updateQuarter}
+        onToggleTimeout={toggleTimeout}
+        onAddEvent={addEvent}
+        onUndoEvent={undoEvent}
+        onTogglePlayerOnCourt={togglePlayerOnCourt}
+        editingCourt={editingCourt}
+        onSetEditingCourt={setEditingCourt}
+      />
+    );
+  }
 
   return (
     <div>
