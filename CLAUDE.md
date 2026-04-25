@@ -136,6 +136,9 @@ After editing rules, deploy separately with `firebase deploy --only firestore:ru
 - Public pages have season selector dropdown when multiple seasons exist
 - Fixture generator creates matches with active season's ID
 
+### Stats Columns Config
+`src/lib/statsColumns.js` exports `HIDEABLE_STATS_COLUMNS` — the columns the admin can hide on `/stats` via `SettingsManager`. Visibility is persisted in the `config/stats` document (collection `config`). Identity columns (position, name, team) are not hideable — when adding a new stats column, decide whether it belongs in that list or must remain always visible.
+
 ### Cloudinary
 - Cloud name: `dttjycffp`, Upload preset: `player_photos`
 - Folders: `teams/`, `players/`, `posts/`
