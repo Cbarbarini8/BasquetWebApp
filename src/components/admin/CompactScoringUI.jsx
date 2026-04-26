@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 // Flujo: el usuario arma un evento tocando el grid central y despues toca
 // al jugador de cualquier equipo para imputar el evento.
 
-function Jersey({ player, fouls, color, armed, onClick }) {
+function Jersey({ player, fouls, color, armed, onClick, isCaptain }) {
   const containerRef = useRef(null);
   const handleClick = () => {
     if (!armed || !containerRef.current) { onClick?.(); return; }
@@ -41,6 +41,15 @@ function Jersey({ player, fouls, color, armed, onClick }) {
           title={`${fouls} falta${fouls !== 1 ? 's' : ''}`}
         >
           {fouls}
+        </span>
+      )}
+      {isCaptain && (
+        <span
+          className="absolute top-0 left-0.5 font-bold leading-none text-[10px]"
+          style={{ color: '#f59e0b' }}
+          title="Capitan"
+        >
+          ★
         </span>
       )}
       <span className="font-bold leading-none text-lg">#{player.number}</span>
@@ -85,7 +94,7 @@ function TimeoutButton({ used, onClick, disabled, title }) {
   );
 }
 
-function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, onTogglePlayer, onClose, ejectionReason }) {
+function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, onTogglePlayer, onClose, ejectionReason, captainId }) {
   return (
     <div className="absolute inset-0 z-40 flex items-end">
       <div
@@ -136,8 +145,11 @@ function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, o
                     color: isOn ? '#ffffff' : teamColor,
                     minHeight: 56,
                   }}
-                  title={ejectReason ? `Expulsado (${ejectReason})` : undefined}
+                  title={ejectReason ? `Expulsado (${ejectReason})` : (captainId === p.id ? 'Capitan' : undefined)}
                 >
+                  {captainId === p.id && (
+                    <span className="absolute top-0.5 left-0.5 text-[11px] font-bold leading-none" style={{ color: '#f59e0b' }}>★</span>
+                  )}
                   <span className="font-bold leading-none text-lg">#{p.number}</span>
                   <span className="truncate max-w-full text-[10px] leading-tight mt-0.5" style={{ opacity: 0.9 }}>
                     {p.lastName}
@@ -168,6 +180,10 @@ export default function CompactScoringUI({
   playerPersonalFouls,
   homeTeamFouls,
   awayTeamFouls,
+  benchTechByTeam = {},
+  benchTechLimit = 2,
+  homeCaptainId,
+  awayCaptainId,
   ejectionReason,
   canEdit,
   // clock
@@ -185,6 +201,7 @@ export default function CompactScoringUI({
   onToggleTimeout,
   // event handlers
   onAddEvent,
+  onAddBenchTech,
   onUndoEvent,
   onTogglePlayerOnCourt,
   // court editor (controlado desde LiveScoring para poder abrirlo automaticamente al foul out)
@@ -202,6 +219,8 @@ export default function CompactScoringUI({
   const awayTimeoutUsed = !!(match.timeouts?.away?.[currentQuarter]);
   const homeBonus = homeTeamFouls >= 4;
   const awayBonus = awayTeamFouls >= 4;
+  const homeBenchN = benchTechByTeam[match.homeTeamId] || 0;
+  const awayBenchN = benchTechByTeam[match.awayTeamId] || 0;
 
   const armed = armedIdx !== null ? eventButtons[armedIdx] : null;
   const homeColor = homeTeam?.primaryColor || '#2563eb';
@@ -211,6 +230,7 @@ export default function CompactScoringUI({
   const lastPlayer = lastEvent
     ? (homePlayers.find(p => p.id === lastEvent.playerId) || awayPlayers.find(p => p.id === lastEvent.playerId))
     : null;
+  const lastIsBench = lastEvent?.type === 'foulTechBench';
 
   const onEventTap = (idx) => {
     setArmedIdx(prev => (prev === idx ? null : idx));
@@ -231,6 +251,7 @@ export default function CompactScoringUI({
   const renderJerseyColumn = (side) => {
     const players = side === 'home' ? onCourtHomePlayers : onCourtAwayPlayers;
     const color = side === 'home' ? homeColor : awayColor;
+    const captainId = side === 'home' ? homeCaptainId : awayCaptainId;
     return (
       <div className="relative grid grid-rows-5 gap-1 min-h-0">
         {Array.from({ length: 5 }).map((_, i) => {
@@ -244,6 +265,7 @@ export default function CompactScoringUI({
               color={color}
               armed={!!armed}
               onClick={() => onJerseyTap(side, p.id)}
+              isCaptain={captainId === p.id}
             />
           );
         })}
@@ -312,6 +334,22 @@ export default function CompactScoringUI({
                 disabled={!canEdit}
                 title={`Tiempo muerto Q${currentQuarter} ${homeTimeoutUsed ? '(usado)' : '(disponible)'}`}
               />
+              {canEdit && onAddBenchTech && (
+                <button
+                  type="button"
+                  onClick={() => onAddBenchTech('home')}
+                  className="px-1.5 py-0.5 rounded font-bold leading-none"
+                  style={{
+                    fontSize: 9.5,
+                    backgroundColor: homeBenchN >= 1 ? 'var(--color-danger)' : 'rgba(255,255,255,0.08)',
+                    border: `1px solid ${homeBenchN >= 1 ? 'var(--color-danger)' : 'rgba(255,255,255,0.2)'}`,
+                    color: homeBenchN >= 1 ? '#ffffff' : '#cbd5e1',
+                  }}
+                  title={`Tecnica al banco (${homeBenchN}/${benchTechLimit}). A la ${benchTechLimit}da expulsa al capitan.`}
+                >
+                  T.Bco{homeBenchN ? ` ${homeBenchN}` : ''}
+                </button>
+              )}
             </div>
           </div>
           <p className="text-xl font-bold leading-none tabular-nums">{match.homeScore || 0}</p>
@@ -423,6 +461,22 @@ export default function CompactScoringUI({
                 disabled={!canEdit}
                 title={`Tiempo muerto Q${currentQuarter} ${awayTimeoutUsed ? '(usado)' : '(disponible)'}`}
               />
+              {canEdit && onAddBenchTech && (
+                <button
+                  type="button"
+                  onClick={() => onAddBenchTech('away')}
+                  className="px-1.5 py-0.5 rounded font-bold leading-none"
+                  style={{
+                    fontSize: 9.5,
+                    backgroundColor: awayBenchN >= 1 ? 'var(--color-danger)' : 'rgba(255,255,255,0.08)',
+                    border: `1px solid ${awayBenchN >= 1 ? 'var(--color-danger)' : 'rgba(255,255,255,0.2)'}`,
+                    color: awayBenchN >= 1 ? '#ffffff' : '#cbd5e1',
+                  }}
+                  title={`Tecnica al banco (${awayBenchN}/${benchTechLimit}). A la ${benchTechLimit}da expulsa al capitan.`}
+                >
+                  T.Bco{awayBenchN ? ` ${awayBenchN}` : ''}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -480,8 +534,12 @@ export default function CompactScoringUI({
           )}
         </div>
         <div className="flex-1 text-center truncate" style={{ color: 'var(--color-text-secondary)' }}>
-          {lastEvent && lastPlayer ? (
-            <>#{lastPlayer.number} {lastPlayer.lastName} · {eventLabel(lastEvent)}</>
+          {lastEvent ? (
+            lastIsBench ? (
+              <>Banco · {eventLabel(lastEvent)}</>
+            ) : lastPlayer ? (
+              <>#{lastPlayer.number} {lastPlayer.lastName} · {eventLabel(lastEvent)}</>
+            ) : '—'
           ) : '—'}
         </div>
         {canEdit && (
@@ -525,6 +583,7 @@ export default function CompactScoringUI({
           onTogglePlayer={onTogglePlayerOnCourt}
           onClose={closeSheet}
           ejectionReason={ejectionReason}
+          captainId={sheetSide === 'home' ? homeCaptainId : awayCaptainId}
         />
       )}
     </div>

@@ -39,6 +39,7 @@ const EVENT_LABELS = {
   'foul': 'Falta',
   'foulTech': 'Falta tecnica',
   'foulUnsport': 'Falta antideportiva',
+  'foulTechBench': 'Tec. al banco',
   'ejection': 'Expulsion',
   'assist': 'Asistencia',
   'offRebound': 'Reb. ofensivo',
@@ -48,14 +49,18 @@ const EVENT_LABELS = {
   'turnover': 'Perdida',
 };
 
+// Faltas que suman al jugador (bonus 5).
 const PERSONAL_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport'];
+// Faltas que suman al equipo en el cuarto (incluye tecnicas al banco).
+const TEAM_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport', 'foulTechBench'];
 const FLAGRANT_FOUL_TYPES = ['foulTech', 'foulUnsport'];
 const PERSONAL_FOUL_LIMIT = 5;
 const FLAGRANT_FOUL_LIMIT = 2;
+const BENCH_TECH_LIMIT = 2;
 
 const MAX_ON_COURT = 5;
 
-function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0 }) {
+function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0, isCaptain = false }) {
   return (
     <button
       type="button"
@@ -85,6 +90,15 @@ function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0 })
           {fouls}
         </span>
       )}
+      {isCaptain && (
+        <span
+          className={`absolute font-bold leading-none ${compact ? 'top-0 left-0 text-[10px]' : 'top-0.5 left-0.5 text-xs'}`}
+          style={{ color: '#f59e0b' }}
+          title="Capitan"
+        >
+          ★
+        </span>
+      )}
       <span className={`font-bold leading-none ${compact ? 'text-base' : 'text-2xl'}`}>
         #{player.number}
       </span>
@@ -97,12 +111,74 @@ function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0 })
   );
 }
 
+function EjectionPromptModal({ playerLabel, defaultMatches = 1, onCancel, onConfirm }) {
+  const [value, setValue] = useState(String(defaultMatches));
+  const submit = () => {
+    const n = parseInt(value, 10);
+    if (!Number.isFinite(n) || n < 1) return;
+    onConfirm(n);
+  };
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onCancel}
+    >
+      <div
+        className="rounded-lg p-4 w-full max-w-sm"
+        style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold mb-2" style={{ color: 'var(--color-text)' }}>
+          Expulsion directa
+        </h3>
+        <p className="text-xs mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+          {playerLabel}. Indica cuantas fechas de suspension recibe (minimo 1).
+        </p>
+        <input
+          type="number"
+          min="1"
+          step="1"
+          value={value}
+          autoFocus
+          onChange={e => setValue(e.target.value.replace(/[^0-9]/g, ''))}
+          onKeyDown={e => { if (e.key === 'Enter') submit(); }}
+          className="w-full px-3 py-2 rounded text-sm font-bold text-center"
+          style={{
+            backgroundColor: 'var(--color-bg-card)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text)',
+          }}
+        />
+        <div className="flex justify-end gap-2 mt-4">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 rounded text-sm"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={submit}
+            className="px-4 py-1.5 rounded text-sm text-white font-medium"
+            style={{ backgroundColor: 'var(--color-danger)' }}
+          >
+            Confirmar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function LiveScoring({ match, events, homePlayers, awayPlayers, homeTeam, awayTeam, canEdit = true, user, compact = false }) {
   const { toast } = useToast();
   const [selectedPlayer, setSelectedPlayer] = useState({ home: '', away: '' });
   const [editingCourt, setEditingCourt] = useState({ home: false, away: false });
   const [editingClock, setEditingClock] = useState(false);
   const [clockInput, setClockInput] = useState('');
+  // { side, playerId } cuando hay una expulsion pendiente de confirmar fechas
+  const [pendingEjection, setPendingEjection] = useState(null);
   const { mmss, remainingMs, running } = useMatchClock(match);
   const autoStoppedRef = useRef(false);
 
@@ -134,23 +210,29 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   const onCourtHomeIds = match.onCourtHome || [];
   const onCourtAwayIds = match.onCourtAway || [];
   const currentQuarter = match.quarter || 1;
+  const homeCaptainId = match.homeCaptainId || null;
+  const awayCaptainId = match.awayCaptainId || null;
 
-  const { playerPersonalFouls, playerFlagrantFouls, ejectedPlayers } = useMemo(() => {
+  const { playerPersonalFouls, playerFlagrantFouls, ejectedPlayers, benchTechByTeam } = useMemo(() => {
     const personal = {};
     const flagrant = {};
     const ejected = new Set();
+    const benchTech = {};
     events.forEach(e => {
-      if (PERSONAL_FOUL_TYPES.includes(e.type)) {
+      if (PERSONAL_FOUL_TYPES.includes(e.type) && e.playerId) {
         personal[e.playerId] = (personal[e.playerId] || 0) + 1;
       }
-      if (FLAGRANT_FOUL_TYPES.includes(e.type)) {
+      if (FLAGRANT_FOUL_TYPES.includes(e.type) && e.playerId) {
         flagrant[e.playerId] = (flagrant[e.playerId] || 0) + 1;
       }
-      if (e.type === 'ejection') {
+      if (e.type === 'ejection' && e.playerId) {
         ejected.add(e.playerId);
       }
+      if (e.type === 'foulTechBench' && e.teamId) {
+        benchTech[e.teamId] = (benchTech[e.teamId] || 0) + 1;
+      }
     });
-    return { playerPersonalFouls: personal, playerFlagrantFouls: flagrant, ejectedPlayers: ejected };
+    return { playerPersonalFouls: personal, playerFlagrantFouls: flagrant, ejectedPlayers: ejected, benchTechByTeam: benchTech };
   }, [events]);
 
   const ejectionReason = (playerId) => {
@@ -161,7 +243,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   };
 
   const teamFoulsQ = (teamId) =>
-    events.filter(e => PERSONAL_FOUL_TYPES.includes(e.type) && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
+    events.filter(e => TEAM_FOUL_TYPES.includes(e.type) && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
 
   const homeTeamFouls = teamFoulsQ(match.homeTeamId);
   const awayTeamFouls = teamFoulsQ(match.awayTeamId);
@@ -214,10 +296,66 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     await batch.commit();
   };
 
+  // Aplica la baja en cancha + cierre de stint para un jugador expulsado.
+  // Muta `matchUpdates` y agrega ops al batch.
+  const applyEjectionSideEffects = (batch, matchUpdates, side, playerId) => {
+    const courtField = side === 'home' ? 'onCourtHome' : 'onCourtAway';
+    const currentIds = side === 'home' ? onCourtHomeIds : onCourtAwayIds;
+    if (!currentIds.includes(playerId)) return;
+    const newIds = currentIds.filter(id => id !== playerId);
+    matchUpdates[courtField] = newIds;
+    const clockIsRunning = !!match.clockRunning && !!match.currentStint;
+    if (clockIsRunning) {
+      closeOpenStintToBatch(batch, db, match);
+      const newHomeIds = side === 'home' ? newIds : onCourtHomeIds;
+      const newAwayIds = side === 'away' ? newIds : onCourtAwayIds;
+      const base = pausedRemainingFromMatch(match);
+      const remainingPlayers = [
+        ...newHomeIds.map(id => ({ playerId: id, teamId: match.homeTeamId })),
+        ...newAwayIds.map(id => ({ playerId: id, teamId: match.awayTeamId })),
+      ];
+      matchUpdates.currentStint = buildOpenStint(base, match.quarter || 1, remainingPlayers);
+      matchUpdates.clockRemainingMs = base;
+      matchUpdates.clockStartedAt = Date.now();
+    }
+  };
+
+  // Confirma una expulsion directa con N fechas (desde el modal).
+  const commitEjection = async (side, playerId, suspensionMatches) => {
+    const teamId = side === 'home' ? match.homeTeamId : match.awayTeamId;
+    const batch = writeBatch(db);
+    const eventRef = doc(collection(db, `matches/${match.id}/events`));
+    batch.set(eventRef, {
+      type: 'ejection',
+      playerId,
+      teamId,
+      quarter: match.quarter || 1,
+      suspensionMatches,
+      timestamp: serverTimestamp(),
+    });
+    const matchUpdates = {};
+    applyEjectionSideEffects(batch, matchUpdates, side, playerId);
+    if (Object.keys(matchUpdates).length > 0) {
+      batch.update(doc(db, 'matches', match.id), matchUpdates);
+    }
+    await batch.commit();
+    const label = getPlayerLabel(playerId);
+    setSelectedPlayer(prev => ({ ...prev, [side]: '' }));
+    setEditingCourt(prev => ({ ...prev, [side]: true }));
+    toast.error(`${label}: expulsion directa (${suspensionMatches} fecha${suspensionMatches === 1 ? '' : 's'}). Debe ser reemplazado.`, 6000);
+    if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
+  };
+
   const addEvent = async (side, eventDef, overridePlayerId) => {
     const playerId = overridePlayerId || selectedPlayer[side];
     if (!playerId) {
       toast.info('Selecciona un jugador primero');
+      return;
+    }
+
+    // Expulsion directa: pedir cuantas fechas antes de escribir.
+    if (eventDef.type === 'ejection') {
+      setPendingEjection({ side, playerId });
       return;
     }
 
@@ -246,36 +384,24 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       batch.update(matchRef, { [scoreField]: increment(eventDef.points) });
     }
 
-    // Si este evento deja al jugador expulsado, sacarlo de cancha y abrir seleccion de reemplazo
+    // Si este evento deja al jugador expulsado por acumulacion, sacarlo de
+    // cancha y abrir seleccion de reemplazo. La acumulacion (5 personales o
+    // 2 flagrantes) saca del partido pero NO suspende fechas: esa logica vive
+    // en suspensions.js que solo mira eventos `ejection`.
     const isFoulType = PERSONAL_FOUL_TYPES.includes(eventDef.type);
     const isFlagrantType = FLAGRANT_FOUL_TYPES.includes(eventDef.type);
     const nextPersonal = isFoulType ? (playerPersonalFouls[playerId] || 0) + 1 : (playerPersonalFouls[playerId] || 0);
     const nextFlagrant = isFlagrantType ? (playerFlagrantFouls[playerId] || 0) + 1 : (playerFlagrantFouls[playerId] || 0);
     const willReachFive = isFoulType && nextPersonal >= PERSONAL_FOUL_LIMIT;
     const willReachTwoFlagrant = isFlagrantType && nextFlagrant >= FLAGRANT_FOUL_LIMIT;
-    const isDirectEjection = eventDef.type === 'ejection';
-    const willBeEjected = willReachFive || willReachTwoFlagrant || isDirectEjection;
+    const willBeEjected = willReachFive || willReachTwoFlagrant;
 
     if (willBeEjected) {
-      const courtField = side === 'home' ? 'onCourtHome' : 'onCourtAway';
-      const currentIds = side === 'home' ? onCourtHomeIds : onCourtAwayIds;
-      const newIds = currentIds.filter(id => id !== playerId);
-      const matchUpdates = { [courtField]: newIds };
-      const clockIsRunning = !!match.clockRunning && !!match.currentStint;
-      if (clockIsRunning) {
-        closeOpenStintToBatch(batch, db, match);
-        const newHomeIds = side === 'home' ? newIds : onCourtHomeIds;
-        const newAwayIds = side === 'away' ? newIds : onCourtAwayIds;
-        const base = pausedRemainingFromMatch(match);
-        const remainingPlayers = [
-          ...newHomeIds.map(id => ({ playerId: id, teamId: match.homeTeamId })),
-          ...newAwayIds.map(id => ({ playerId: id, teamId: match.awayTeamId })),
-        ];
-        matchUpdates.currentStint = buildOpenStint(base, match.quarter || 1, remainingPlayers);
-        matchUpdates.clockRemainingMs = base;
-        matchUpdates.clockStartedAt = Date.now();
+      const matchUpdates = {};
+      applyEjectionSideEffects(batch, matchUpdates, side, playerId);
+      if (Object.keys(matchUpdates).length > 0) {
+        batch.update(doc(db, 'matches', match.id), matchUpdates);
       }
-      batch.update(doc(db, 'matches', match.id), matchUpdates);
     }
 
     await batch.commit();
@@ -284,10 +410,69 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       const label = getPlayerLabel(playerId);
       setSelectedPlayer(prev => ({ ...prev, [side]: '' }));
       setEditingCourt(prev => ({ ...prev, [side]: true }));
-      const reason = isDirectEjection ? 'expulsion directa'
-        : willReachTwoFlagrant ? '2 faltas tecnicas/antideportivas'
-        : '5 faltas';
-      toast.error(`${label} queda expulsado (${reason}). Debe ser reemplazado.`, 6000);
+      const reason = willReachTwoFlagrant ? '2 faltas tecnicas/antideportivas' : '5 faltas';
+      toast.error(`${label} sale del partido (${reason}). Debe ser reemplazado.`, 6000);
+    }
+
+    if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
+  };
+
+  // Falta tecnica al banco (sin jugador). A la 2da del partido del mismo
+  // equipo, expulsa al capitan automaticamente con 1 fecha de suspension; si
+  // el capitan ya esta expulsado, solo avisa.
+  const addBenchTechFoul = async (side) => {
+    if (!canEdit) return;
+    const teamId = side === 'home' ? match.homeTeamId : match.awayTeamId;
+    const captainId = side === 'home' ? homeCaptainId : awayCaptainId;
+    const previousBenchTechs = benchTechByTeam[teamId] || 0;
+    const willTriggerCaptainEjection =
+      previousBenchTechs + 1 >= BENCH_TECH_LIMIT &&
+      captainId &&
+      !ejectionReason(captainId);
+
+    const batch = writeBatch(db);
+
+    const benchEventRef = doc(collection(db, `matches/${match.id}/events`));
+    batch.set(benchEventRef, {
+      type: 'foulTechBench',
+      teamId,
+      quarter: match.quarter || 1,
+      timestamp: serverTimestamp(),
+    });
+
+    const matchUpdates = {};
+
+    if (willTriggerCaptainEjection) {
+      const captainEventRef = doc(collection(db, `matches/${match.id}/events`));
+      batch.set(captainEventRef, {
+        type: 'ejection',
+        playerId: captainId,
+        teamId,
+        quarter: match.quarter || 1,
+        suspensionMatches: 1,
+        autoFromBenchTech: true,
+        timestamp: serverTimestamp(),
+      });
+      applyEjectionSideEffects(batch, matchUpdates, side, captainId);
+    }
+
+    if (Object.keys(matchUpdates).length > 0) {
+      batch.update(doc(db, 'matches', match.id), matchUpdates);
+    }
+
+    await batch.commit();
+
+    const teamName = side === 'home' ? homeTeam?.name : awayTeam?.name;
+    if (willTriggerCaptainEjection) {
+      const label = getPlayerLabel(captainId);
+      setEditingCourt(prev => ({ ...prev, [side]: true }));
+      toast.error(`2da tecnica al banco de ${teamName || 'el equipo'}: capitan ${label} expulsado (1 fecha).`, 6000);
+    } else if (previousBenchTechs + 1 >= BENCH_TECH_LIMIT) {
+      // Capitan ya esta expulsado o no asignado: no hay a quien sancionar.
+      const reason = !captainId ? 'no hay capitan asignado' : 'el capitan ya estaba expulsado';
+      toast.warning(`2da tecnica al banco de ${teamName || 'el equipo'}: ${reason}, no se aplica expulsion adicional.`, 6000);
+    } else {
+      toast.info(`Tecnica al banco de ${teamName || 'el equipo'} (${previousBenchTechs + 1}/${BENCH_TECH_LIMIT}).`);
     }
 
     if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
@@ -397,6 +582,12 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     return label?.[event.made] || event.type;
   };
 
+  const benchTechBadge = (teamId) => {
+    const n = benchTechByTeam[teamId] || 0;
+    if (n === 0) return null;
+    return n;
+  };
+
   const renderSide = (side, team, onCourtPlayers) => {
     const selected = selectedPlayer[side];
     const isEditing = editingCourt[side];
@@ -406,6 +597,8 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     const teamFouls = side === 'home' ? homeTeamFouls : awayTeamFouls;
     const timeoutUsed = !!(match.timeouts?.[side]?.[currentQuarter]);
     const inBonus = teamFouls >= 4;
+    const captainId = side === 'home' ? homeCaptainId : awayCaptainId;
+    const benchN = benchTechBadge(side === 'home' ? match.homeTeamId : match.awayTeamId);
 
     return (
       <div className={`flex-1 ${compact ? 'min-w-0' : 'min-w-[280px]'}`}>
@@ -427,7 +620,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
             </button>
           )}
         </div>
-        <div className={`flex items-center gap-2 ${compact ? 'mb-1 text-[10px]' : 'mb-2 text-xs'}`}>
+        <div className={`flex items-center gap-2 flex-wrap ${compact ? 'mb-1 text-[10px]' : 'mb-2 text-xs'}`}>
           <span
             className="px-1.5 py-0.5 rounded font-medium"
             style={{
@@ -453,6 +646,21 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
           >
             {timeoutUsed ? '● TO' : '○ TO'}
           </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => addBenchTechFoul(side)}
+              className="px-1.5 py-0.5 rounded font-medium"
+              style={{
+                backgroundColor: benchN >= 1 ? 'var(--color-danger)' : 'transparent',
+                color: benchN >= 1 ? '#ffffff' : 'var(--color-text-secondary)',
+                border: '1px solid var(--color-border)',
+              }}
+              title={`Tecnica al banco (${benchN || 0}/${BENCH_TECH_LIMIT}). A la ${BENCH_TECH_LIMIT}da expulsa al capitan.`}
+            >
+              T.Bco {benchN ? `(${benchN})` : ''}
+            </button>
+          )}
         </div>
 
         {/* Modo edicion de cancha */}
@@ -476,6 +684,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     selected={isOn}
                     onClick={() => togglePlayerOnCourt(side, p.id)}
                     compact
+                    isCaptain={captainId === p.id}
                   />
                 );
               })}
@@ -523,6 +732,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                         onClick={() => setSelectedPlayer(prev => ({ ...prev, [side]: p.id }))}
                         compact
                         fouls={playerPersonalFouls[p.id] || 0}
+                        isCaptain={captainId === p.id}
                       />
                     );
                   })}
@@ -556,6 +766,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     onClick={() => setSelectedPlayer(prev => ({ ...prev, [side]: p.id }))}
                     compact={compact}
                     fouls={playerPersonalFouls[p.id] || 0}
+                    isCaptain={captainId === p.id}
                   />
                 ))}
               </div>
@@ -584,13 +795,14 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
         {compact ? (
           lastEvent && (() => {
             const p = teamPlayers.find(pl => pl.id === lastEvent.playerId);
+            const isBench = lastEvent.type === 'foulTechBench';
             return (
               <div
                 className="flex items-center justify-between px-1 py-0.5 rounded text-[10px]"
                 style={{ backgroundColor: 'var(--color-bg-hover)' }}
               >
                 <span className="truncate" style={{ color: 'var(--color-text-secondary)' }}>
-                  #{p?.number} {p?.lastName} · {getEventLabel(lastEvent)}
+                  {isBench ? 'Banco' : p ? `#${p.number} ${p.lastName}` : '—'} · {getEventLabel(lastEvent)}
                 </span>
                 {canEdit && (
                   <button
@@ -608,7 +820,8 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
         ) : (
           <div className="space-y-1 max-h-60 overflow-y-auto">
             {teamEvents.map(event => {
-              const player = teamPlayers.find(p => p.id === event.playerId);
+              const isBench = event.type === 'foulTechBench';
+              const player = !isBench ? teamPlayers.find(p => p.id === event.playerId) : null;
               return (
                 <div
                   key={event.id}
@@ -616,7 +829,12 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                   style={{ backgroundColor: 'var(--color-bg-hover)' }}
                 >
                   <span style={{ color: 'var(--color-text-secondary)' }}>
-                    <strong>#{player?.number}</strong> {player?.lastName} - {getEventLabel(event)}
+                    {isBench ? <strong>Banco</strong> : <><strong>#{player?.number}</strong> {player?.lastName}</>} - {getEventLabel(event)}
+                    {event.type === 'ejection' && event.suspensionMatches > 0 && (
+                      <span className="ml-1 text-[10px] font-bold" style={{ color: 'var(--color-danger)' }}>
+                        ({event.suspensionMatches} fecha{event.suspensionMatches === 1 ? '' : 's'})
+                      </span>
+                    )}
                     <span className="ml-1" style={{ color: 'var(--color-text-muted)' }}>Q{event.quarter}</span>
                   </span>
                   {canEdit && (
@@ -637,44 +855,64 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     );
   };
 
+  const ejectionModal = pendingEjection && (
+    <EjectionPromptModal
+      playerLabel={getPlayerLabel(pendingEjection.playerId)}
+      onCancel={() => setPendingEjection(null)}
+      onConfirm={async (n) => {
+        const { side, playerId } = pendingEjection;
+        setPendingEjection(null);
+        await commitEjection(side, playerId, n);
+      }}
+    />
+  );
+
   if (compact) {
     return (
-      <CompactScoringUI
-        match={match}
-        events={events}
-        homeTeam={homeTeam}
-        awayTeam={awayTeam}
-        homePlayers={homePlayers}
-        awayPlayers={awayPlayers}
-        onCourtHomePlayers={onCourtHomePlayers}
-        onCourtAwayPlayers={onCourtAwayPlayers}
-        onCourtHomeIds={onCourtHomeIds}
-        onCourtAwayIds={onCourtAwayIds}
-        eventButtons={EVENT_BUTTONS}
-        eventLabel={getEventLabel}
-        playerPersonalFouls={playerPersonalFouls}
-        homeTeamFouls={homeTeamFouls}
-        awayTeamFouls={awayTeamFouls}
-        ejectionReason={ejectionReason}
-        canEdit={canEdit}
-        mmss={mmss}
-        remainingMs={remainingMs}
-        running={running}
-        editingClock={editingClock}
-        clockInput={clockInput}
-        onClockInputChange={setClockInput}
-        onOpenClockEdit={openClockEdit}
-        onSaveClockEdit={saveClockEdit}
-        onCancelClockEdit={() => setEditingClock(false)}
-        onToggleClock={toggleClock}
-        onUpdateQuarter={updateQuarter}
-        onToggleTimeout={toggleTimeout}
-        onAddEvent={addEvent}
-        onUndoEvent={undoEvent}
-        onTogglePlayerOnCourt={togglePlayerOnCourt}
-        editingCourt={editingCourt}
-        onSetEditingCourt={setEditingCourt}
-      />
+      <>
+        <CompactScoringUI
+          match={match}
+          events={events}
+          homeTeam={homeTeam}
+          awayTeam={awayTeam}
+          homePlayers={homePlayers}
+          awayPlayers={awayPlayers}
+          onCourtHomePlayers={onCourtHomePlayers}
+          onCourtAwayPlayers={onCourtAwayPlayers}
+          onCourtHomeIds={onCourtHomeIds}
+          onCourtAwayIds={onCourtAwayIds}
+          eventButtons={EVENT_BUTTONS}
+          eventLabel={getEventLabel}
+          playerPersonalFouls={playerPersonalFouls}
+          homeTeamFouls={homeTeamFouls}
+          awayTeamFouls={awayTeamFouls}
+          benchTechByTeam={benchTechByTeam}
+          benchTechLimit={BENCH_TECH_LIMIT}
+          homeCaptainId={homeCaptainId}
+          awayCaptainId={awayCaptainId}
+          ejectionReason={ejectionReason}
+          canEdit={canEdit}
+          mmss={mmss}
+          remainingMs={remainingMs}
+          running={running}
+          editingClock={editingClock}
+          clockInput={clockInput}
+          onClockInputChange={setClockInput}
+          onOpenClockEdit={openClockEdit}
+          onSaveClockEdit={saveClockEdit}
+          onCancelClockEdit={() => setEditingClock(false)}
+          onToggleClock={toggleClock}
+          onUpdateQuarter={updateQuarter}
+          onToggleTimeout={toggleTimeout}
+          onAddEvent={addEvent}
+          onAddBenchTech={addBenchTechFoul}
+          onUndoEvent={undoEvent}
+          onTogglePlayerOnCourt={togglePlayerOnCourt}
+          editingCourt={editingCourt}
+          onSetEditingCourt={setEditingCourt}
+        />
+        {ejectionModal}
+      </>
     );
   }
 
@@ -916,6 +1154,8 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
         {!compact && <div className="md:hidden h-px" style={{ backgroundColor: 'var(--color-border)' }} />}
         {renderSide('away', awayTeam, onCourtAwayPlayers)}
       </div>
+
+      {ejectionModal}
     </div>
   );
 }

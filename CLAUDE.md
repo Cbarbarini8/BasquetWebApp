@@ -37,7 +37,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Firestore Collections
 - `teams` — name, shortName, logoUrl (Cloudinary)
 - `players` — firstName, lastName, number, teamId, photoUrl, photoStatus, uploadToken, pendingPhotoUrl (self-upload pending approval)
-- `matches` — round, homeTeamId, awayTeamId, homeScore, awayScore, status (scheduled/live/finished), quarter, scheduledDate, scheduledTime, courtId, seasonId. Clock/stint fields: `clockRunning`, `clockRemainingMs`, `clockStartedAt`, `currentStint` (open stint embedded — see Match Clock section)
+- `matches` — round, homeTeamId, awayTeamId, homeScore, awayScore, status (scheduled/live/finished), quarter, scheduledDate, scheduledTime, courtId, seasonId, `homeCaptainId`/`awayCaptainId` (set when match starts; required by `StartMatchModal`), `referee1`/`referee2` (free text). Clock/stint fields: `clockRunning`, `clockRemainingMs`, `clockStartedAt`, `currentStint` (open stint embedded — see Match Clock section)
 - `matches/{id}/events` — type, playerId, teamId, quarter, made (subcollection)
 - `matches/{id}/playerStints` — closed time-on-court stints: playerId, teamId, quarter, startClockMs, endClockMs, durationMs, createdAt (subcollection)
 - `seasons` — name, active (bool), createdAt
@@ -49,8 +49,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Event types
 Scoring: `2pt`, `3pt`, `ft` (with `made: true/false`)
-Fouls: `foul` (personal — 5th ejects from match but does NOT suspend), `foulTech` (technical), `foulUnsport` (unsportsmanlike), `ejection` (direct expulsion)
+Fouls: `foul` (personal — 5th ejects from match), `foulTech` (technical), `foulUnsport` (unsportsmanlike), `foulTechBench` (technical against the bench — has `teamId` but no `playerId`), `ejection` (direct expulsion — carries `suspensionMatches: N`)
 Other: `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
+
+**Foul accumulation rules (`LiveScoring.jsx`)**:
+- `PERSONAL_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport']` — counted per player (5 → ejected from match, does NOT suspend next match)
+- `TEAM_FOUL_TYPES = PERSONAL_FOUL_TYPES + ['foulTechBench']` — counted per team per quarter (4+ = bonus)
+- 2 flagrants (`foulTech` + `foulUnsport`) → ejected from match, does NOT suspend next match
+- 2nd `foulTechBench` of the same team in the match → if captain is available, auto-emits an `ejection` event for the captain with `suspensionMatches: 1` in the same batch; if captain is already ejected or missing, only a warning toast (no extra sanction). The auto-ejection event has `autoFromBenchTech: true` for traceability.
 
 ### Routes (in `App.jsx`)
 - `/` — Fixture (home), `/standings`, `/stats`, `/gallery` — Public pages
@@ -101,12 +107,11 @@ Stint model (`src/lib/stints.js`): `match.currentStint` (on match doc) represent
 **Stint closing contract**: any action that changes who's on court, pauses the clock, changes quarter, edits the clock, or finishes the match **must close the open stint** via `closeOpenStintToBatch(batch, db, match)` in the same batch that mutates the match doc. Skipping this drifts minute totals from actual elapsed time. Grep existing usages in `LiveScoring.jsx` before adding new clock/lineup mutations.
 
 ### Automatic Suspensions
-`src/lib/suspensions.js` computes next-match suspensions from the previous match's events:
-- **2 flagrant fouls** (`foulTech` + `foulUnsport` combined) → suspended next match
-- **`ejection`** (direct expulsion) → suspended next match
-- 5 personal fouls eject from the current match but do NOT suspend
+`src/lib/suspensions.js`: only `ejection` events suspend future matches. Each `ejection` carries `suspensionMatches: N` (set via the modal in `LiveScoring`, default 1, min 1, no max). Events without that field (legacy data) default to N=1. 5 personal fouls and 2 flagrants only eject from the current match — they do NOT carry over.
 
-`findPreviousFinishedMatch(allMatches, currentMatch, teamId)` resolves "previous match" as the most recent `status === 'finished'` match for the team in the **same season**, ordered by `scheduledDate` desc, tie-broken by `createdAt`. `StartMatchModal` uses this to surface suspended players at match start.
+`computeActiveSuspensionsForTeam(currentMatch, recentFinishedMatches, eventsByMatchId, teamId)` walks the team's recent finished matches (ascending), counts how many finished matches happened *after* each ejection, and returns the players whose `N - playedAfter > 0`. `StartMatchModal` calls `findRecentFinishedMatches(allMatches, currentMatch, teamId, MAX_LOOKBACK=10)` and fetches events for each one to feed this. The legacy `findPreviousFinishedMatch` is preserved as a thin wrapper for any external callers.
+
+When the 2nd bench technical fires the captain's auto-ejection (see Event types above), it writes a regular `ejection` event with `suspensionMatches: 1` — the suspension pipeline picks it up automatically.
 
 ### Firestore Rules
 `firestore.rules` is versioned in the repo. Two non-trivial rules:
@@ -124,7 +129,7 @@ After editing rules, deploy separately with `firebase deploy --only firestore:ru
 `AdminDashboard` filters tab visibility at render: `ownerOnly` tabs (Users, Audit) are hidden from non-owners; the matches tab is shown if the user can view **either** matches or scoring.
 
 ### Compact Mode
-`LiveScoring` accepts a `compact` prop (driven by `useIsCompactScoring` — landscape-phone heuristic) that reshapes jersey sizes, grid columns, text sizes, and flips the away side to `flex-row-reverse`. Keep both modes in sync when editing the scoring UI.
+`LiveScoring` accepts a `compact` prop (driven by `useIsCompactScoring` — landscape-phone heuristic) that reshapes jersey sizes, grid columns, text sizes, and flips the away side to `flex-row-reverse`. The compact mode delegates to `CompactScoringUI`, which renders its own header, jersey columns, and the bench-technical button. Keep both modes in sync when editing the scoring UI — every captain-aware or bench-tech-aware change must touch both files (and `LiveScoring` passes captains/bench counts as props).
 
 ### Roles & Permissions
 - **Owner**: full access + Users/Audit tabs
@@ -149,17 +154,10 @@ After editing rules, deploy separately with `firebase deploy --only firestore:ru
 - Credentials in `.env.local` (see `.env.example`), prefixed `VITE_FIREBASE_*`
 - Firebase project: `basquet-ef86a`
 - Auth: email/password provider
-- Hosting: rewrites all routes to /index.html (SPA)
+- `firebase.json` configures hosting (`public: dist`, SPA rewrite of all routes to `/index.html`) and points Firestore rules at `firestore.rules`
 
 ### Scripts (in `scripts/`)
 - `create-owner.mjs` — Initialize owner user: `node scripts/create-owner.mjs <email> <password> [name]`
 - `bulk-players.mjs` — Bulk load players by team
 - `add-tokens.mjs` — Add upload tokens to existing players
 - `load-match-stats.mjs` — Bulk load match statistics with validation mode
-
-## User Preferences
-- Spanish-speaking user (Argentina), communicate in Spanish
-- Prefers comprehensive features over minimal
-- Commits organized by section with descriptive Spanish summaries
-- Always commit, push, and deploy together when asked
-- Icons with tooltips preferred over text buttons in admin

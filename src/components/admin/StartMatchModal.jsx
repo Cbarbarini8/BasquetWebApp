@@ -3,7 +3,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import TeamLogo from '../common/TeamLogo';
 import { useToast } from '../../context/ToastContext';
-import { computeSuspensionsFromEvents, findPreviousFinishedMatch } from '../../lib/suspensions';
+import { computeActiveSuspensionsForTeam, findRecentFinishedMatches } from '../../lib/suspensions';
 
 export default function StartMatchModal({ match, teamsMap, players, allMatches = [], onCancel, onConfirm }) {
   const { toast } = useToast();
@@ -35,32 +35,35 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
     return removed;
   };
   const [removed, setRemoved] = useState(initialRemoved);
+  const [captains, setCaptains] = useState(() => ({
+    home: match.homeCaptainId || '',
+    away: match.awayCaptainId || '',
+  }));
   const [saving, setSaving] = useState(false);
-  // { [playerId]: { reason, fromMatchId, fromMatchRound } }
+  // { [playerId]: { reason, fromMatchId, fromMatchRound, remaining } }
   const [suspended, setSuspended] = useState({});
   const [loadingSuspensions, setLoadingSuspensions] = useState(true);
 
-  // Detectar jugadores suspendidos por el partido previo de cada equipo
+  // Detectar jugadores suspendidos a partir de los partidos previos del equipo
   useEffect(() => {
     let cancelled = false;
     async function loadSuspensions() {
       setLoadingSuspensions(true);
       const result = {};
       for (const teamId of [match.homeTeamId, match.awayTeamId]) {
-        const prev = findPreviousFinishedMatch(allMatches, match, teamId);
-        if (!prev) continue;
+        const recent = findRecentFinishedMatches(allMatches, match, teamId);
+        if (recent.length === 0) continue;
         try {
-          const snap = await getDocs(collection(db, `matches/${prev.id}/events`));
-          const events = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-          const susps = computeSuspensionsFromEvents(events);
-          Object.entries(susps).forEach(([pid, reason]) => {
+          const eventsByMatchId = {};
+          for (const m of recent) {
+            const snap = await getDocs(collection(db, `matches/${m.id}/events`));
+            eventsByMatchId[m.id] = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          }
+          const susps = computeActiveSuspensionsForTeam(match, recent, eventsByMatchId, teamId);
+          Object.entries(susps).forEach(([pid, info]) => {
             const player = players.find(p => p.id === pid);
             if (!player || player.teamId !== teamId) return;
-            result[pid] = {
-              reason,
-              fromMatchId: prev.id,
-              fromMatchRound: prev.round,
-            };
+            result[pid] = info;
           });
         } catch (err) {
           console.error('Error cargando suspensiones:', err);
@@ -98,6 +101,16 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
+    // Si quitan al jugador que era capitan, limpiar capitania
+    setCaptains(prev => {
+      if (prev.home === id) return { ...prev, home: '' };
+      if (prev.away === id) return { ...prev, away: '' };
+      return prev;
+    });
+  };
+
+  const setCaptain = (side, playerId) => {
+    setCaptains(prev => ({ ...prev, [side]: prev[side] === playerId ? '' : playerId }));
   };
 
   const handleConfirm = async () => {
@@ -118,6 +131,23 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
     if (!checkDupes(homePlayers, home?.name || 'Local')) return;
     if (!checkDupes(awayPlayers, away?.name || 'Visitante')) return;
 
+    if (!captains.home) {
+      toast.error(`Asigna un capitan a ${home?.name || 'Local'}`);
+      return;
+    }
+    if (!captains.away) {
+      toast.error(`Asigna un capitan a ${away?.name || 'Visitante'}`);
+      return;
+    }
+    if (removed.has(captains.home)) {
+      toast.error(`El capitan de ${home?.name || 'Local'} esta excluido del partido`);
+      return;
+    }
+    if (removed.has(captains.away)) {
+      toast.error(`El capitan de ${away?.name || 'Visitante'} esta excluido del partido`);
+      return;
+    }
+
     const result = {};
     [...homePlayers, ...awayPlayers].forEach(p => {
       if (removed.has(p.id)) return;
@@ -127,13 +157,14 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
 
     setSaving(true);
     try {
-      await onConfirm(result);
+      await onConfirm(result, { homeCaptainId: captains.home, awayCaptainId: captains.away });
     } finally {
       setSaving(false);
     }
   };
 
-  const renderTeam = (team, list) => {
+  const renderTeam = (side, team, list) => {
+    const captainId = captains[side];
     const active = list.filter(p => !removed.has(p.id));
     const excluded = list.filter(p => removed.has(p.id));
     const teamSuspendedIncluded = active.filter(p => suspended[p.id]);
@@ -148,6 +179,20 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
             {active.length} en partido
           </span>
         </div>
+        <div className="text-[11px] mb-2 px-2 py-1 rounded flex items-center gap-1"
+          style={{
+            backgroundColor: captainId ? 'rgba(34,197,94,0.12)' : 'var(--color-bg-hover)',
+            color: captainId ? 'var(--color-success)' : 'var(--color-warning)',
+            border: `1px solid ${captainId ? 'var(--color-success)' : 'var(--color-warning)'}`,
+          }}
+        >
+          <span>★</span>
+          {captainId ? (
+            <>Capitan: <strong>{(() => { const p = list.find(x => x.id === captainId); return p ? `${p.firstName} ${p.lastName}` : '—'; })()}</strong></>
+          ) : (
+            <>Falta asignar capitan (toca la estrella)</>
+          )}
+        </div>
         {teamSuspendedIncluded.length > 0 && (
           <p className="text-[11px] mb-2 px-2 py-1 rounded" style={{ backgroundColor: 'rgba(234, 88, 12, 0.15)', color: 'var(--color-danger)' }}>
             Atencion: hay jugadores suspendidos incluidos manualmente.
@@ -159,6 +204,7 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
           )}
           {active.map(p => {
             const susp = suspended[p.id];
+            const isCaptain = captainId === p.id;
             return (
               <div key={p.id} className="flex items-center gap-2">
                 <input
@@ -173,6 +219,19 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
                     color: 'var(--color-text)',
                   }}
                 />
+                <button
+                  type="button"
+                  onClick={() => setCaptain(side, p.id)}
+                  className="shrink-0 w-6 h-6 rounded flex items-center justify-center text-base leading-none"
+                  style={{
+                    color: isCaptain ? '#f59e0b' : 'var(--color-text-muted)',
+                    border: `1px solid ${isCaptain ? '#f59e0b' : 'var(--color-border)'}`,
+                    backgroundColor: isCaptain ? 'rgba(245,158,11,0.15)' : 'transparent',
+                  }}
+                  title={isCaptain ? 'Capitan (click para quitar)' : 'Designar capitan'}
+                >
+                  {isCaptain ? '★' : '☆'}
+                </button>
                 <span className="flex-1 text-sm truncate" style={{ color: 'var(--color-text)' }}>
                   {p.firstName} {p.lastName}
                 </span>
@@ -180,7 +239,7 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
                   <span
                     className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-semibold"
                     style={{ backgroundColor: 'var(--color-danger)', color: '#ffffff' }}
-                    title={`Suspendido: ${susp.reason} (Fecha ${susp.fromMatchRound})`}
+                    title={`Suspendido: ${susp.reason}${susp.fromMatchRound ? ` (Fecha ${susp.fromMatchRound})` : ''}`}
                   >
                     SUSP
                   </span>
@@ -215,7 +274,7 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
                       <span
                         className="shrink-0 text-[10px] px-1.5 py-0.5 rounded font-semibold"
                         style={{ backgroundColor: 'var(--color-danger)', color: '#ffffff' }}
-                        title={`Suspendido por ${susp.reason} en Fecha ${susp.fromMatchRound}`}
+                        title={`Suspendido por ${susp.reason}${susp.fromMatchRound ? ` en Fecha ${susp.fromMatchRound}` : ''}`}
                       >
                         SUSP
                       </span>
@@ -251,24 +310,24 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
         onClick={e => e.stopPropagation()}
       >
         <h3 className="text-base font-bold mb-1" style={{ color: 'var(--color-text)' }}>
-          Numeros de jugadores
+          Numeros de jugadores y capitanes
         </h3>
         <p className="text-xs mb-2" style={{ color: 'var(--color-text-muted)' }}>
-          Podes modificar el numero que usa cada jugador en este partido. Dejar vacio para no asignarle numero.
+          Modifica el numero que usa cada jugador, asigna un capitan por equipo (★) y excluye con ✕ a los que no juegan.
         </p>
         {loadingSuspensions ? (
           <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
-            Revisando suspensiones del partido previo...
+            Revisando suspensiones de partidos previos...
           </p>
         ) : Object.keys(suspended).length > 0 && (
           <p className="text-[11px] mb-3 px-2 py-1 rounded" style={{ backgroundColor: 'var(--color-bg-hover)', color: 'var(--color-text-secondary)' }}>
-            Se detectaron {Object.keys(suspended).length} jugador{Object.keys(suspended).length === 1 ? '' : 'es'} suspendido{Object.keys(suspended).length === 1 ? '' : 's'} por el partido anterior. Quedan excluidos por defecto (podes forzarlos con "+ Incluir").
+            Se detectaron {Object.keys(suspended).length} jugador{Object.keys(suspended).length === 1 ? '' : 'es'} suspendido{Object.keys(suspended).length === 1 ? '' : 's'} por expulsiones previas. Quedan excluidos por defecto (podes forzarlos con "+ Incluir").
           </p>
         )}
         <div className="flex flex-col md:flex-row gap-4">
-          {renderTeam(home, homePlayers)}
+          {renderTeam('home', home, homePlayers)}
           <div className="hidden md:block w-px" style={{ backgroundColor: 'var(--color-border)' }} />
-          {renderTeam(away, awayPlayers)}
+          {renderTeam('away', away, awayPlayers)}
         </div>
         <div className="flex justify-end gap-2 mt-4 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
           <button

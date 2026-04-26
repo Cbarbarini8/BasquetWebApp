@@ -55,6 +55,8 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
   const [courtId, setCourtId] = useState(match.courtId || '');
   const [homeScore, setHomeScore] = useState(String(match.homeScore || 0));
   const [awayScore, setAwayScore] = useState(String(match.awayScore || 0));
+  const [referee1, setReferee1] = useState(match.referee1 || '');
+  const [referee2, setReferee2] = useState(match.referee2 || '');
   const [saving, setSaving] = useState(false);
 
   // Stats state
@@ -82,6 +84,8 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
         scheduledDate: date ? Timestamp.fromDate(new Date(date + 'T00:00:00')) : null,
         scheduledTime: time,
         courtId: courtId || null,
+        referee1: referee1.trim() || null,
+        referee2: referee2.trim() || null,
       };
       if (isFinished) {
         data.homeScore = parseInt(homeScore) || 0;
@@ -206,6 +210,19 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
             <option value="">Sin cancha</option>
             {courts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <div className="flex-1 min-w-[180px]">
+          <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Arbitro 1</label>
+          <input type="text" value={referee1} onChange={e => setReferee1(e.target.value)} placeholder="Nombre completo"
+            className="w-full px-3 py-1.5 rounded-md text-sm" style={inputStyle} />
+        </div>
+        <div className="flex-1 min-w-[180px]">
+          <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Arbitro 2</label>
+          <input type="text" value={referee2} onChange={e => setReferee2(e.target.value)} placeholder="Nombre completo"
+            className="w-full px-3 py-1.5 rounded-md text-sm" style={inputStyle} />
         </div>
       </div>
 
@@ -353,6 +370,8 @@ function ManualMatchForm({ teams, courts, seasonId, onClose }) {
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [courtId, setCourtId] = useState('');
+  const [referee1, setReferee1] = useState('');
+  const [referee2, setReferee2] = useState('');
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e) => {
@@ -376,6 +395,8 @@ function ManualMatchForm({ teams, courts, seasonId, onClose }) {
         scheduledDate: date ? Timestamp.fromDate(new Date(date + 'T00:00:00')) : null,
         scheduledTime: time,
         courtId: courtId || null,
+        referee1: referee1.trim() || null,
+        referee2: referee2.trim() || null,
         quarter: isFinished ? 4 : 0,
         seasonId: seasonId || null,
         createdAt: serverTimestamp(),
@@ -392,6 +413,8 @@ function ManualMatchForm({ teams, courts, seasonId, onClose }) {
       setDate('');
       setTime('');
       setCourtId('');
+      setReferee1('');
+      setReferee2('');
     } catch (err) {
       console.error('Error creating match:', err);
       toast.error('Error al crear el partido');
@@ -483,6 +506,23 @@ function ManualMatchForm({ teams, courts, seasonId, onClose }) {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2">
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Arbitro 1</label>
+            <input type="text" value={referee1} onChange={e => setReferee1(e.target.value)} placeholder="Nombre completo"
+              className="w-full px-3 py-2 rounded-md text-sm"
+              style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+            />
+          </div>
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Arbitro 2</label>
+            <input type="text" value={referee2} onChange={e => setReferee2(e.target.value)} placeholder="Nombre completo"
+              className="w-full px-3 py-2 rounded-md text-sm"
+              style={{ backgroundColor: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+            />
+          </div>
+        </div>
+
         {status === 'finished' && (
           <div className="flex gap-2 items-end">
             <div>
@@ -535,7 +575,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     return `${h} vs ${a}`;
   };
 
-  const confirmStartMatch = async (playerNumbers) => {
+  const confirmStartMatch = async (playerNumbers, captains = {}) => {
     const m = startingMatch;
     if (!m) return;
     await updateDoc(doc(db, 'matches', m.id), {
@@ -545,6 +585,8 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       awayScore: 0,
       startedAt: serverTimestamp(),
       playerNumbers,
+      homeCaptainId: captains.homeCaptainId || null,
+      awayCaptainId: captains.awayCaptainId || null,
       timeouts: { home: {}, away: {} },
       clockRunning: false,
       clockRemainingMs: 10 * 60 * 1000,
