@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useDocument } from '../hooks/useDocument';
+import { useMatchDoc } from '../hooks/useMatchDoc';
 import { useTeams } from '../hooks/useTeams';
 import { usePlayers } from '../hooks/usePlayers';
 import { useCourts } from '../hooks/useCourts';
@@ -190,7 +190,7 @@ function EventLog({ events, players, homeTeamId }) {
 
 export default function MatchDetailPage() {
   const { matchId } = useParams();
-  const { data: match, loading: matchLoading } = useDocument(`matches/${matchId}`);
+  const { data: match, loading: matchLoading } = useMatchDoc(matchId);
   const { events, stints, loading: detailLoading } = useMatchDetailData(match);
   const { data: teams, loading: teamsLoading } = useTeams();
   const { data: allPlayers, loading: playersLoading } = usePlayers();

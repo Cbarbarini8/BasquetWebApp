@@ -72,6 +72,7 @@ Other: `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
 ### Key Patterns
 - `src/hooks/useCollection.js` — Generic real-time Firestore hook; all data hooks build on it. Uses `JSON.stringify(queryConstraints)` in deps to prevent infinite re-renders from array identity churn — preserve this pattern when extending.
 - `src/hooks/useDocument.js` — Single-document real-time hook counterpart
+- `src/hooks/useMatchDoc.js` — Variant for the public match page: `getDoc` initial, only escalates to `onSnapshot` if `status === 'live'`. Drops the listener if the match transitions to finished mid-session. Use this instead of `useDocument` for the public match page to keep Firestore reads down.
 - `src/hooks/useUserRole.js` — Role/permissions hook for current user
 - `src/lib/calculations.js` — Pure functions for standings and player stats computation
 - `src/lib/audit.js` — `logAction(user, action, collection, documentId, description, details)` writes to auditLog (ALL writes must be audited). Called **after** the Firestore commit, not inside the batch, so audit failures never block the mutation.
@@ -155,6 +156,7 @@ After editing rules, deploy separately with `firebase deploy --only firestore:ru
 - Firebase project: `basquet-ef86a`
 - Auth: email/password provider
 - `firebase.json` configures hosting (`public: dist`, SPA rewrite of all routes to `/index.html`) and points Firestore rules at `firestore.rules`
+- **Analytics (optional)**: `src/lib/firebase.js` initializes `getAnalytics(app)` only when `VITE_FIREBASE_MEASUREMENT_ID` is set and the browser supports it. To enable: in Firebase Console → Project Settings → Integrations → Google Analytics, link a GA4 property; copy the resulting `measurementId` (format `G-XXXXXXXXXX`) into `.env.local`; rebuild and redeploy. Analytics has its own quota and does NOT count against Firestore reads.
 
 ### Scripts (in `scripts/`)
 - `create-owner.mjs` — Initialize owner user: `node scripts/create-owner.mjs <email> <password> [name]`
