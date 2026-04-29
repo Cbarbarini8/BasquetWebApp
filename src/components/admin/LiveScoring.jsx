@@ -684,6 +684,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     selected={isOn}
                     onClick={() => togglePlayerOnCourt(side, p.id)}
                     compact
+                    fouls={playerPersonalFouls[p.id] || 0}
                     isCaptain={captainId === p.id}
                   />
                 );

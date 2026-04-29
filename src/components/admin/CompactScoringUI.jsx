@@ -94,7 +94,7 @@ function TimeoutButton({ used, onClick, disabled, title }) {
   );
 }
 
-function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, onTogglePlayer, onClose, ejectionReason, captainId }) {
+function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, onTogglePlayer, onClose, ejectionReason, captainId, playerPersonalFouls = {} }) {
   return (
     <div className="absolute inset-0 z-40 flex items-end">
       <div
@@ -133,6 +133,8 @@ function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, o
               const isOn = onCourtIds.includes(p.id);
               const ejectReason = ejectionReason?.(p.id);
               const disabled = !!ejectReason && !isOn;
+              const fouls = playerPersonalFouls[p.id] || 0;
+              const foulBg = fouls >= 4 ? '#f59e0b' : 'var(--color-danger)';
               return (
                 <button
                   key={p.id}
@@ -149,6 +151,22 @@ function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, o
                 >
                   {captainId === p.id && (
                     <span className="absolute top-0.5 left-0.5 text-[11px] font-bold leading-none" style={{ color: '#f59e0b' }}>★</span>
+                  )}
+                  {fouls > 0 && (
+                    <span
+                      className="absolute top-0.5 right-0.5 text-[10px] font-bold leading-none rounded-full flex items-center justify-center"
+                      style={{
+                        backgroundColor: foulBg,
+                        color: '#ffffff',
+                        minWidth: 14,
+                        height: 14,
+                        padding: '0 3px',
+                        opacity: fouls >= 4 ? 1 : 0.85,
+                      }}
+                      title={`${fouls} falta${fouls !== 1 ? 's' : ''}`}
+                    >
+                      {fouls}
+                    </span>
                   )}
                   <span className="font-bold leading-none text-lg">#{p.number}</span>
                   <span className="truncate max-w-full text-[10px] leading-tight mt-0.5" style={{ opacity: 0.9 }}>
@@ -584,6 +602,7 @@ export default function CompactScoringUI({
           onClose={closeSheet}
           ejectionReason={ejectionReason}
           captainId={sheetSide === 'home' ? homeCaptainId : awayCaptainId}
+          playerPersonalFouls={playerPersonalFouls}
         />
       )}
     </div>
