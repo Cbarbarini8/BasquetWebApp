@@ -67,12 +67,20 @@ Other: `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
 - `/admin/match/:matchId` — Live scoring page (protected)
 
 ### Provider Hierarchy
-`BrowserRouter` → `ThemeProvider` → `AuthProvider` → routes. `useAuth()` returns `{ user, userDoc, loading, isOwner, isActive, canView, canEdit, login, logout }` — `canView(section)` / `canEdit(section)` check permission strings like 'teams', 'matches', etc.
+`BrowserRouter` → `ThemeProvider` → `AuthProvider` → `ToastProvider` → `DataProvider` → routes. `useAuth()` returns `{ user, userDoc, loading, isOwner, isActive, canView, canEdit, login, logout }` — `canView(section)` / `canEdit(section)` check permission strings like 'teams', 'matches', etc. `useToast()` exposes `success/error/warning/info` for transient notifications.
+
+### Shared Data Subscriptions (DataContext)
+`src/context/DataContext.jsx` centralizes Firestore subscriptions to avoid each screen mounting its own `onSnapshot`:
+- **Always-mounted** (cheap, ~10–20 docs each, used everywhere): `teams`, `courts`, `seasons`. Consumed via `useData()`.
+- **Lazy ref-counted** (expensive, ~156 docs, only stats/match-detail/admin need it): `players`. Consumers call `usePlayersSubscription()`, which increments a ref count on mount and decrements on unmount; the listener attaches on the first consumer and detaches when the last one unmounts.
+
+When adding a new screen, prefer the context hooks over re-subscribing. When adding a new "always-on" collection, weigh doc count vs. ubiquity before adding it to the always-mounted set — anything sizeable should follow the players ref-count pattern instead.
 
 ### Key Patterns
 - `src/hooks/useCollection.js` — Generic real-time Firestore hook; all data hooks build on it. Uses `JSON.stringify(queryConstraints)` in deps to prevent infinite re-renders from array identity churn — preserve this pattern when extending.
 - `src/hooks/useDocument.js` — Single-document real-time hook counterpart
 - `src/hooks/useMatchDoc.js` — Variant for the public match page: `getDoc` initial, only escalates to `onSnapshot` if `status === 'live'`. Drops the listener if the match transitions to finished mid-session. Use this instead of `useDocument` for the public match page to keep Firestore reads down.
+- `src/hooks/useMatchDetailData.js` — Same live-vs-one-shot strategy applied to `events` + `playerStints` subcollections of a match: `getDocs` once for `scheduled`/`finished`, `onSnapshot` only while `status === 'live'`. Re-runs and tears down listeners when status transitions. Pair with `useMatchDoc` on the public match page.
 - `src/hooks/useUserRole.js` — Role/permissions hook for current user
 - `src/lib/calculations.js` — Pure functions for standings and player stats computation
 - `src/lib/audit.js` — `logAction(user, action, collection, documentId, description, details)` writes to auditLog (ALL writes must be audited). Called **after** the Firestore commit, not inside the batch, so audit failures never block the mutation.
