@@ -7,6 +7,7 @@ import { useToast } from '../../context/ToastContext';
 import StartMatchModal from './StartMatchModal';
 import { closeOpenStintToBatch } from '../../lib/stints';
 import { getMatchProximityToNow } from '../../lib/utils';
+import { PHASES, PHASE_LABEL, PHASE_REGULAR } from '../../lib/timeouts';
 import { IconButton, EditIcon, DeleteIcon, PlayIcon, StopIcon, CalendarIcon, ClipboardIcon, UndoIcon } from '../common/Icons';
 
 const EVENT_TYPES = [
@@ -57,6 +58,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
   const [awayScore, setAwayScore] = useState(String(match.awayScore || 0));
   const [referee1, setReferee1] = useState(match.referee1 || '');
   const [referee2, setReferee2] = useState(match.referee2 || '');
+  const [phase, setPhase] = useState(match.phase || PHASE_REGULAR);
   const [saving, setSaving] = useState(false);
 
   // Stats state
@@ -86,6 +88,7 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
         courtId: courtId || null,
         referee1: referee1.trim() || null,
         referee2: referee2.trim() || null,
+        phase,
       };
       if (isFinished) {
         data.homeScore = parseInt(homeScore) || 0;
@@ -223,6 +226,19 @@ function MatchEditor({ match, teamsMap, courts, allPlayers, onClose, user }) {
           <label className="block text-xs mb-1" style={{ color: 'var(--color-text-muted)' }}>Arbitro 2</label>
           <input type="text" value={referee2} onChange={e => setReferee2(e.target.value)} placeholder="Nombre completo"
             className="w-full px-3 py-1.5 rounded-md text-sm" style={inputStyle} />
+        </div>
+        <div>
+          <label
+            className="block text-xs mb-1"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Afecta cupos de tiempos muertos: semifinal Q4=2 TM; final Q3+Q4 pool de 3 con max 2 en Q4."
+          >
+            Fase
+          </label>
+          <select value={phase} onChange={e => setPhase(e.target.value)}
+            className="px-3 py-1.5 rounded-md text-sm" style={inputStyle}>
+            {PHASES.map(p => <option key={p} value={p}>{PHASE_LABEL[p]}</option>)}
+          </select>
         </div>
       </div>
 
@@ -566,6 +582,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [startingMatch, setStartingMatch] = useState(null);
+  const [walkoverMatch, setWalkoverMatch] = useState(null);
 
   const getMatchLabel = (matchId) => {
     const m = matches.find(x => x.id === matchId);
@@ -575,7 +592,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     return `${h} vs ${a}`;
   };
 
-  const confirmStartMatch = async (playerNumbers, captains = {}) => {
+  const confirmStartMatch = async (playerNumbers, captains = {}, libres = { home: [], away: [] }) => {
     const m = startingMatch;
     if (!m) return;
     await updateDoc(doc(db, 'matches', m.id), {
@@ -587,6 +604,7 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       playerNumbers,
       homeCaptainId: captains.homeCaptainId || null,
       awayCaptainId: captains.awayCaptainId || null,
+      libres: { home: libres.home || [], away: libres.away || [] },
       timeouts: { home: {}, away: {} },
       clockRunning: false,
       clockRemainingMs: 10 * 60 * 1000,
@@ -610,6 +628,27 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     });
     await batch.commit();
     await logAction(user, 'finish', 'matches', matchId, `Finalizo partido: ${getMatchLabel(matchId)}`);
+  };
+
+  // Marca un partido como WO (walkover): el equipo que no se presento pierde
+  // 20-0 y suma 0 puntos. Reglamento Liga Comercial 2026.
+  const markWalkover = async (matchId, noShowSide) => {
+    const m = matches.find(x => x.id === matchId);
+    if (!m) return;
+    const homeScore = noShowSide === 'home' ? 0 : 20;
+    const awayScore = noShowSide === 'away' ? 0 : 20;
+    const homeName = teamsMap[m.homeTeamId]?.name || 'Local';
+    const awayName = teamsMap[m.awayTeamId]?.name || 'Visitante';
+    const noShowName = noShowSide === 'home' ? homeName : awayName;
+    await updateDoc(doc(db, 'matches', matchId), {
+      status: 'walkover',
+      homeScore,
+      awayScore,
+      walkoverNoShow: noShowSide,
+      finishedAt: serverTimestamp(),
+    });
+    await logAction(user, 'walkover', 'matches', matchId, `WO: ${noShowName} no se presento (${homeName} ${homeScore}-${awayScore} ${awayName})`);
+    setWalkoverMatch(null);
   };
 
   const resetMatch = async (matchId) => {
@@ -660,9 +699,10 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     groupedByRound[r].push(m);
   });
 
+  const isRoundDoneStatus = (s) => s === 'finished' || s === 'walkover';
   const roundNumbers = Object.keys(groupedByRound).map(Number).sort((a, b) => b - a);
-  const pendingRoundNumbers = roundNumbers.filter(r => groupedByRound[r].some(m => m.status !== 'finished'));
-  const completedRoundNumbers = roundNumbers.filter(r => groupedByRound[r].every(m => m.status === 'finished'));
+  const pendingRoundNumbers = roundNumbers.filter(r => groupedByRound[r].some(m => !isRoundDoneStatus(m.status)));
+  const completedRoundNumbers = roundNumbers.filter(r => groupedByRound[r].every(m => isRoundDoneStatus(m.status)));
 
   // Pendientes: orden cronologico ascendente (fecha+hora menor a mayor)
   const now = Date.now();
@@ -734,6 +774,14 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
           onConfirm={confirmStartMatch}
         />
       )}
+      {walkoverMatch && (
+        <WalkoverModal
+          homeName={teamsMap[walkoverMatch.homeTeamId]?.name || 'Local'}
+          awayName={teamsMap[walkoverMatch.awayTeamId]?.name || 'Visitante'}
+          onCancel={() => setWalkoverMatch(null)}
+          onConfirm={(side) => markWalkover(walkoverMatch.id, side)}
+        />
+      )}
     </div>
   );
 
@@ -778,6 +826,15 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
                         Final: {match.homeScore}-{match.awayScore}
                       </span>
                     )}
+                    {match.status === 'walkover' && (
+                      <span
+                        className="text-xs font-bold px-2 py-0.5 rounded text-white"
+                        style={{ backgroundColor: 'var(--color-warning)' }}
+                        title={`No se presento: ${match.walkoverNoShow === 'home' ? home : away}`}
+                      >
+                        WO {match.homeScore}-{match.awayScore}
+                      </span>
+                    )}
                     {match.status === 'scheduled' && (
                       <span className="text-xs" style={{ color: dateStr ? 'var(--color-text-muted)' : 'var(--color-warning)' }}>
                         {scheduleLabel}
@@ -789,6 +846,15 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
                       <>
                         <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
                         <IconButton icon={PlayIcon} label="Iniciar" onClick={() => setStartingMatch(match)} color="var(--color-success)" />
+                        <button
+                          type="button"
+                          onClick={() => setWalkoverMatch(match)}
+                          className="text-xs px-2 py-1 rounded font-bold"
+                          style={{ color: 'var(--color-warning)', border: '1px solid var(--color-warning)' }}
+                          title="Marcar partido como walkover (un equipo no se presento)"
+                        >
+                          WO
+                        </button>
                       </>
                     )}
                     {match.status === 'live' && (canEdit || canScoring) && (
@@ -826,4 +892,55 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       </div>
     );
   }
+}
+
+function WalkoverModal({ homeName, awayName, onCancel, onConfirm }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+      onClick={onCancel}
+    >
+      <div
+        className="rounded-lg p-4 w-full max-w-md"
+        style={{ backgroundColor: 'var(--color-bg)', border: '1px solid var(--color-border)' }}
+        onClick={e => e.stopPropagation()}
+      >
+        <h3 className="text-base font-bold mb-1" style={{ color: 'var(--color-text)' }}>
+          Marcar walkover
+        </h3>
+        <p className="text-xs mb-3" style={{ color: 'var(--color-text-secondary)' }}>
+          {homeName} vs {awayName}. El equipo ausente pierde 20-0 y suma 0 puntos. ¿Quien no se presento?
+        </p>
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => onConfirm('home')}
+            className="px-4 py-2 rounded text-sm font-medium text-left"
+            style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+          >
+            <strong>{homeName}</strong> no se presento (gana {awayName} 20-0)
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm('away')}
+            className="px-4 py-2 rounded text-sm font-medium text-left"
+            style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+          >
+            <strong>{awayName}</strong> no se presento (gana {homeName} 20-0)
+          </button>
+        </div>
+        <div className="flex justify-end mt-4 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="px-3 py-1.5 rounded text-sm"
+            style={{ border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+          >
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

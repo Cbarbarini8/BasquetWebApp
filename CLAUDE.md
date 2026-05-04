@@ -26,6 +26,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm run build && firebase deploy --only hosting,firestore:rules` — Full deploy (app + rules)
 - No test framework — no unit or integration tests exist
 
+### Local testing with Firebase Emulator
+The Firebase Emulator Suite (Firestore + Auth) is configured for local testing without touching production. Requires Java (Temurin/OpenJDK).
+
+- `npm run emulators:fresh` — Start emulators **without** importing prior state. Use the very first time (creates `.firebase-emulator-data/` on Ctrl+C). Saves snapshot on exit.
+- `npm run emulators` — Start emulators with import + export-on-exit. Use after the first run; persists state across sessions in `.firebase-emulator-data/` (gitignored).
+- `npm run seed:emulator` — Populate the running emulator with synthetic data: 1 owner (`admin@local.test` / `admin123`), 1 active season, 1 court, 4 teams, 40 players (mixed ages including legacy with no `birthDate`), 7 matches across `scheduled`/`live`/`finished`/`walkover` and one `phase: 'semifinal'`.
+- `npm run dev:emulator` — Start the Vite dev server in `emulator` mode (loads `.env.emulator` which sets `VITE_USE_EMULATOR=true`). `firebase.js` then calls `connectFirestoreEmulator` / `connectAuthEmulator` on boot. Analytics is auto-disabled in emulator mode. The plain `npm run dev` always points to production — keep that distinction.
+- Emulator UI: http://127.0.0.1:4000 — inspect/edit Firestore docs and auth users live.
+- **Typical workflow** (3 terminals): A — `npm run emulators` (or `:fresh` first time), B — `npm run seed:emulator` (only first run or to reset), C — `npm run dev:emulator`, then open http://127.0.0.1:5173.
+
 ## Architecture
 
 ### Data Flow
@@ -36,8 +46,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Firestore Collections
 - `teams` — name, shortName, logoUrl (Cloudinary)
-- `players` — firstName, lastName, number, teamId, photoUrl, photoStatus, uploadToken, pendingPhotoUrl (self-upload pending approval)
-- `matches` — round, homeTeamId, awayTeamId, homeScore, awayScore, status (scheduled/live/finished), quarter, scheduledDate, scheduledTime, courtId, seasonId, `homeCaptainId`/`awayCaptainId` (set when match starts; required by `StartMatchModal`), `referee1`/`referee2` (free text). Clock/stint fields: `clockRunning`, `clockRemainingMs`, `clockStartedAt`, `currentStint` (open stint embedded — see Match Clock section)
+- `players` — firstName, lastName, number, teamId, photoUrl, photoStatus, uploadToken, pendingPhotoUrl (self-upload pending approval), `birthDate` (ISO `yyyy-mm-dd` string; empty/missing = legacy data, treated as "+30" for quota purposes)
+- `matches` — round, homeTeamId, awayTeamId, homeScore, awayScore, status (`scheduled` / `live` / `finished` / `walkover`), quarter, scheduledDate, scheduledTime, courtId, seasonId, `homeCaptainId`/`awayCaptainId` (set when match starts; required by `StartMatchModal`), `referee1`/`referee2` (free text), `phase` (`regular` default | `play-in` | `play-off` | `semifinal` | `final` — affects timeout caps; missing = treated as `regular`), `playerNumbers` (object `{playerId: jerseyNumber}` — also serves as the per-match roster: a player is convocado iff they appear here), `libres.{home|away}` (array of playerIds marked as libre for this match), `walkoverNoShow` (`'home'` | `'away'` — only set when status=walkover, indicates which team didn't show up). Clock/stint fields: `clockRunning`, `clockRemainingMs`, `clockStartedAt`, `currentStint` (open stint embedded — see Match Clock section). Timeout fields: `timeouts.{home|away}.{quarter}` is an integer counter of TMs used (legacy boolean tolerated via `timeoutsUsedIn` helper).
 - `matches/{id}/events` — type, playerId, teamId, quarter, made (subcollection)
 - `matches/{id}/playerStints` — closed time-on-court stints: playerId, teamId, quarter, startClockMs, endClockMs, durationMs, createdAt (subcollection)
 - `seasons` — name, active (bool), createdAt
@@ -50,12 +60,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### Event types
 Scoring: `2pt`, `3pt`, `ft` (with `made: true/false`)
 Fouls: `foul` (personal — 5th ejects from match), `foulTech` (technical), `foulUnsport` (unsportsmanlike), `foulTechBench` (technical against the bench — has `teamId` but no `playerId`), `ejection` (direct expulsion — carries `suspensionMatches: N`)
-Other: `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`
+Other: `assist`, `offRebound`, `defRebound`, `steal`, `block`, `turnover`, `timeout` (TM event — has `teamId`, `quarter`, optional `byBenchTechPenalty: true` for auto-emitted penalties)
 
 **Foul accumulation rules (`LiveScoring.jsx`)**:
 - `PERSONAL_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport']` — counted per player (5 → ejected from match, does NOT suspend next match)
 - `TEAM_FOUL_TYPES = PERSONAL_FOUL_TYPES + ['foulTechBench']` — counted per team per quarter (4+ = bonus)
-- 2 flagrants (`foulTech` + `foulUnsport`) → ejected from match, does NOT suspend next match
+- Flagrant accumulation (2 of `foulTech` and/or `foulUnsport` combined) → ejected from match. Per torneo regulation:
+  - 2× `foulTech` (doble técnica) → ejected **+ 1-match suspension**: same batch emits an `ejection` event with `suspensionMatches: 1` and `autoFromDoubleTech: true` so `suspensions.js` picks it up.
+  - 1× `foulTech` + 1× `foulUnsport` → ejected, no suspension.
+  - 2× `foulUnsport` → ejected, no suspension.
 - 2nd `foulTechBench` of the same team in the match → if captain is available, auto-emits an `ejection` event for the captain with `suspensionMatches: 1` in the same batch; if captain is already ejected or missing, only a warning toast (no extra sanction). The auto-ejection event has `autoFromBenchTech: true` for traceability.
 
 ### Routes (in `App.jsx`)
@@ -115,6 +128,74 @@ Stint model (`src/lib/stints.js`): `match.currentStint` (on match doc) represent
 
 **Stint closing contract**: any action that changes who's on court, pauses the clock, changes quarter, edits the clock, or finishes the match **must close the open stint** via `closeOpenStintToBatch(batch, db, match)` in the same batch that mutates the match doc. Skipping this drifts minute totals from actual elapsed time. Grep existing usages in `LiveScoring.jsx` before adding new clock/lineup mutations.
 
+### Standings tiebreakers (reglamento)
+`computeStandings` (`src/lib/calculations.js`) groups teams by total points and resolves each tied group via a recursive cascade matching the reglamento's adaptation of FIBA rules:
+- **2 equipos empatados** → only `headToHeadWins` between them. Goles a/c (overall diff/PF) **NOT** used per regulation. If they haven't played (theoretical edge case), deterministic fallback by `teamId`.
+- **3+ equipos empatados** → `cascadeTieBreak` builds a mini-table including only matches between still-tied teams, then sorts by criteria in order:
+  1. `miniWon` (more wins in mini-table)
+  2. `miniDiff` (better point diff in mini-table)
+  3. `miniFor` (more points-for in mini-table)
+- When a subgroup reduces to 2 at any cascade level, it reverts to `breakTie2` (head-to-head) per regulation: *"vuelve a clasificar por el resultado entre si"*.
+- The mini-table is **rebuilt at each recursion level** to include only the still-tied teams (so once a team breaks free, its matches are excluded from the inner cascade).
+- If the cascade exhausts all 3 criteria with teams still tied, regulation says *sorteo* — code falls back to deterministic order by `teamId` so the rendered standings stay reproducible. The actual tournament organizer would resolve the real sorteo manually.
+
+Walkover matches DO count for both head-to-head and mini-table calculations (the no-show team is treated as a 0-20 loss).
+
+### Walkover (reglamento)
+A scheduled match can be marked as **walkover** (`MatchManager.markWalkover`) when one team doesn't show up. Per regulation:
+- Score is set to **20-0** in favor of the present team.
+- `match.walkoverNoShow` records which side (`'home'` or `'away'`) didn't show up.
+- Standings give the winner `pointsForWin` (default 2) and the no-show team `pointsForWO` (default **0**, NOT the regular `pointsForLoss=1`). `computeStandings` (`src/lib/calculations.js`) treats both `finished` and `walkover` matches as counted, branching on `match.status === 'walkover'` to choose the loser's points.
+- Walkover matches show a "WO" badge in `MatchCard` (fixture) and `MatchManager` (admin); `MatchDetailPage` shows a "WALKOVER · {team} no se presentó" header and a "Partido no disputado" message in place of the box score.
+- `FixturePage` and `MatchManager` treat `walkover` as terminal: rounds where every match is `finished` OR `walkover` show under "completed".
+
+### Match Roster & Libres (reglamento)
+`src/lib/roster.js` codifies the regulation's roster rules:
+- **Max 12 convocados per team per match** (`MAX_ROSTER_SIZE`). The `match.playerNumbers` object IS the roster — a player is convocado iff they have an entry there. `AdminMatchPage` already filters team players by `playerNumbers` before passing to `LiveScoring`.
+- **Max 3 libres per team per match** (`MAX_LIBRES_PER_MATCH`). Stored in `match.libres.{home|away}` as an array of playerIds. The libres are a subset of the convocados (they must also appear in `playerNumbers`).
+- **Libre eligibility** (`checkLibreEligibility`):
+  - Cannot be `CATEGORY_YOUNG` (20-25).
+  - Cannot have played as libre for **another** team in any prior match (cross-team conflict, derived at runtime via `deriveLibreHistory(matches)` — no denormalized field).
+  - In phase `semifinal` or `final`: cannot be a NEW libre — must have been libre for this same team in a prior match.
+
+`StartMatchModal` enforces all of these at confirm time and provides per-player toggles. A migration grace rule applies: matches without `playerNumbers` fall back to "all team players are eligible" (current behavior); matches without `libres` simply have no libres marked.
+
+`PlayerJersey` (full mode) and `Jersey` (compact mode) display a small "L" badge in the bottom-right corner when the player is in `match.libres.{side}`. The `CourtEditorSheet` (compact bottom sheet for picking the 5 starters) also shows the badge.
+
+**Not yet implemented (TODO)**:
+- Adding more convocados during the match (regulation allows up to Q3 start). Today the roster is locked when the match starts.
+- Per-match roster editing for finished matches in `MatchManager`.
+
+### Timeouts (reglamento)
+`src/lib/timeouts.js` codifies the regulation's timeout caps per phase/quarter:
+- **Regular / play-in / play-off**: 1 TM per quarter, no carry-over.
+- **Semifinal**: 1 in Q1/Q2/Q3, **2 in Q4**.
+- **Final**: 1 in Q1, 1 in Q2, **pool of 3 across Q3+Q4 with max 2 in Q4** (the regulation's "must use 1 in Q3" rule is left as soft visual guidance — not hard-blocked).
+- **Overtime (Q5+)**: 1 TM regardless of phase.
+
+Helpers: `timeoutsUsedIn(match, q, side)` (tolerates boolean legacy data), `timeoutsAllowedFor(phase, q)` (returns `{ allowed, pool? }`), `timeoutsAvailableNow(match, q, side)` (clamped ≥0; respects pool caps).
+
+**Each TM is written as both an event AND a counter update** (single batch, mirrors the scoring pattern):
+- Event: `{ type: 'timeout', teamId, quarter, timestamp, byBenchTechPenalty?: true }` in `matches/{id}/events`.
+- Counter: `match.timeouts.{side}.{quarter}` integer, updated explicitly (not via `increment()` because legacy data may be boolean — overwrite avoids type errors).
+- Undo flow: the standard event-undo path in `LiveScoring.undoEvent` decrements the counter when the deleted event is `type: 'timeout'`.
+
+**Bench technical foul → timeout penalty** (`planBenchTechTimeoutPenalty`): each `foulTechBench` consumes 1 TM (current quarter if available, else next quarter). In Q4 or OT with no margin, the penalty is "deferred to next match" — currently shown only as a warning toast; the carry-over write is **not yet implemented** (TODO when match-to-match orchestration is added).
+
+### Player Age Categories (reglamento)
+`src/lib/playerCategory.js` codifies the regulation's age-based quotas:
+- **20-25** (`CATEGORY_YOUNG`): max **3** per team roster, max **2** simultaneously on court.
+- **26-30** (`CATEGORY_MID`): max **6** per team roster, no on-court cap.
+- **31+** (`CATEGORY_SENIOR`): no caps.
+
+`computeAge(birthDate, refDate)` returns null when birthDate is missing/invalid; `categoryFor` falls back to `CATEGORY_SENIOR` in that case — this is the **migration grace rule**: legacy players without a `birthDate` don't participate in quotas until the admin fills the field.
+
+**Enforcement points:**
+- `PlayerForm`: shows a `toast.warning` (non-blocking) when adding/editing a player would push the team over the 3- or 6-quota for the resulting category. We don't hard-block because corrections (typo fixes, birthdays crossing the 25→26 line) need to go through.
+- `LiveScoring.togglePlayerOnCourt`: hard-blocks bringing in a 4th 20-25 player when 2 are already on court (only for players whose birthDate is loaded).
+
+`PlayerBulkImport.jsx` handles CSV download/upload for filling birthDates in bulk: download exports headers `ID,Equipo,Nombre,Apellido,Numero,FechaNacimiento` (UTF-8 BOM so Excel respects accents); upload accepts `yyyy-mm-dd`, `dd/mm/yyyy`, or `dd-mm-yyyy` and shows a preview with valid changes / parse errors / unmatched IDs before committing in 400-op batches.
+
 ### Automatic Suspensions
 `src/lib/suspensions.js`: only `ejection` events suspend future matches. Each `ejection` carries `suspensionMatches: N` (set via the modal in `LiveScoring`, default 1, min 1, no max). Events without that field (legacy data) default to N=1. 5 personal fouls and 2 flagrants only eject from the current match — they do NOT carry over.
 
@@ -171,3 +252,4 @@ After editing rules, deploy separately with `firebase deploy --only firestore:ru
 - `bulk-players.mjs` — Bulk load players by team
 - `add-tokens.mjs` — Add upload tokens to existing players
 - `load-match-stats.mjs` — Bulk load match statistics with validation mode
+- `seed-emulator.mjs` — Populate the local Firebase Emulator with synthetic data. Connects to `127.0.0.1:8080` (Firestore) and `127.0.0.1:9099` (Auth) directly via `connectFirestoreEmulator`/`connectAuthEmulator`, so no real credentials needed. Run via `npm run seed:emulator` while the emulator is up.

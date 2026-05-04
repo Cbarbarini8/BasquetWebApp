@@ -46,7 +46,7 @@ export default function FixturePage() {
     const completed = [];
     nums.forEach(r => {
       const roundMatches = grouped[r];
-      const allFinished = roundMatches.every(m => m.status === 'finished');
+      const allFinished = roundMatches.every(m => m.status === 'finished' || m.status === 'walkover');
       const entry = { round: r, matches: roundMatches };
       if (allFinished) completed.push(entry);
       else pending.push(entry);

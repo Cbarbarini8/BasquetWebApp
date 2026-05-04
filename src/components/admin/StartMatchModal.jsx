@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import TeamLogo from '../common/TeamLogo';
 import { useToast } from '../../context/ToastContext';
 import { computeActiveSuspensionsForTeam, findRecentFinishedMatches } from '../../lib/suspensions';
+import {
+  MAX_ROSTER_SIZE,
+  MAX_LIBRES_PER_MATCH,
+  deriveLibreHistory,
+  checkLibreEligibility,
+} from '../../lib/roster';
 
 export default function StartMatchModal({ match, teamsMap, players, allMatches = [], onCancel, onConfirm }) {
   const { toast } = useToast();
@@ -39,7 +45,18 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
     home: match.homeCaptainId || '',
     away: match.awayCaptainId || '',
   }));
+  // Set de playerIds marcados como libres en este partido.
+  const [libreIds, setLibreIds] = useState(() => {
+    const initial = new Set();
+    (match.libres?.home || []).forEach(id => initial.add(id));
+    (match.libres?.away || []).forEach(id => initial.add(id));
+    return initial;
+  });
   const [saving, setSaving] = useState(false);
+
+  // Historial de libres derivado de todos los matches (para validar cruces
+  // entre equipos y la regla "sin libres nuevos en semis/final").
+  const libreHistory = useMemo(() => deriveLibreHistory(allMatches), [allMatches]);
   // { [playerId]: { reason, fromMatchId, fromMatchRound, remaining } }
   const [suspended, setSuspended] = useState({});
   const [loadingSuspensions, setLoadingSuspensions] = useState(true);
@@ -107,10 +124,43 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
       if (prev.away === id) return { ...prev, away: '' };
       return prev;
     });
+    // Y limpiar marca de libre si la tenia.
+    setLibreIds(prev => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
   };
 
   const setCaptain = (side, playerId) => {
     setCaptains(prev => ({ ...prev, [side]: prev[side] === playerId ? '' : playerId }));
+  };
+
+  // Toggle libre con validacion en el momento (asi el admin recibe feedback
+  // inmediato cuando intenta marcar un jugador inelegible).
+  const toggleLibre = (player, teamId) => {
+    const id = player.id;
+    if (libreIds.has(id)) {
+      setLibreIds(prev => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      return;
+    }
+    const phase = match.phase || 'regular';
+    const playerHistory = libreHistory[id] || [];
+    const elig = checkLibreEligibility(player, teamId, phase, playerHistory, match.id);
+    if (!elig.ok) {
+      toast.warning(`${player.firstName} ${player.lastName}: ${elig.reason}`, 5000);
+      return;
+    }
+    setLibreIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
   };
 
   const handleConfirm = async () => {
@@ -130,6 +180,44 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
     };
     if (!checkDupes(homePlayers, home?.name || 'Local')) return;
     if (!checkDupes(awayPlayers, away?.name || 'Visitante')) return;
+
+    // Cap de plantel: 12 convocados (titulares + suplentes) por equipo.
+    const homeActive = homePlayers.filter(p => !removed.has(p.id));
+    const awayActive = awayPlayers.filter(p => !removed.has(p.id));
+    if (homeActive.length > MAX_ROSTER_SIZE) {
+      toast.error(`${home?.name || 'Local'}: ${homeActive.length} convocados (maximo ${MAX_ROSTER_SIZE}). Excluya jugadores con ✕.`);
+      return;
+    }
+    if (awayActive.length > MAX_ROSTER_SIZE) {
+      toast.error(`${away?.name || 'Visitante'}: ${awayActive.length} convocados (maximo ${MAX_ROSTER_SIZE}). Excluya jugadores con ✕.`);
+      return;
+    }
+
+    // Cap de libres: 3 por equipo. Validacion final por si cambio el plantel
+    // despues de marcar libres.
+    const homeLibres = homeActive.filter(p => libreIds.has(p.id));
+    const awayLibres = awayActive.filter(p => libreIds.has(p.id));
+    if (homeLibres.length > MAX_LIBRES_PER_MATCH) {
+      toast.error(`${home?.name || 'Local'}: ${homeLibres.length} libres (maximo ${MAX_LIBRES_PER_MATCH}).`);
+      return;
+    }
+    if (awayLibres.length > MAX_LIBRES_PER_MATCH) {
+      toast.error(`${away?.name || 'Visitante'}: ${awayLibres.length} libres (maximo ${MAX_LIBRES_PER_MATCH}).`);
+      return;
+    }
+    // Re-validar elegibilidad de cada libre (por si la fase del partido cambio
+    // despues de marcarlos).
+    const phase = match.phase || 'regular';
+    for (const { p, teamId, teamName } of [
+      ...homeLibres.map(p => ({ p, teamId: match.homeTeamId, teamName: home?.name || 'Local' })),
+      ...awayLibres.map(p => ({ p, teamId: match.awayTeamId, teamName: away?.name || 'Visitante' })),
+    ]) {
+      const elig = checkLibreEligibility(p, teamId, phase, libreHistory[p.id] || [], match.id);
+      if (!elig.ok) {
+        toast.error(`${teamName}: ${p.firstName} ${p.lastName} no es libre elegible (${elig.reason}).`);
+        return;
+      }
+    }
 
     if (!captains.home) {
       toast.error(`Asigna un capitan a ${home?.name || 'Local'}`);
@@ -155,9 +243,18 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
       if (!isNaN(n)) result[p.id] = n;
     });
 
+    const libresPayload = {
+      home: homeLibres.map(p => p.id),
+      away: awayLibres.map(p => p.id),
+    };
+
     setSaving(true);
     try {
-      await onConfirm(result, { homeCaptainId: captains.home, awayCaptainId: captains.away });
+      await onConfirm(
+        result,
+        { homeCaptainId: captains.home, awayCaptainId: captains.away },
+        libresPayload,
+      );
     } finally {
       setSaving(false);
     }
@@ -168,6 +265,10 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
     const active = list.filter(p => !removed.has(p.id));
     const excluded = list.filter(p => removed.has(p.id));
     const teamSuspendedIncluded = active.filter(p => suspended[p.id]);
+    const teamId = side === 'home' ? match.homeTeamId : match.awayTeamId;
+    const libresActive = active.filter(p => libreIds.has(p.id));
+    const overRoster = active.length > MAX_ROSTER_SIZE;
+    const overLibres = libresActive.length > MAX_LIBRES_PER_MATCH;
     return (
       <div className="flex-1 min-w-[240px]">
         <div className="flex items-center justify-between gap-2 mb-2">
@@ -175,9 +276,28 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
             <TeamLogo url={team?.logoUrl} name={team?.name} size={24} />
             <h4 className="font-bold text-sm truncate" style={{ color: 'var(--color-text)' }}>{team?.name || 'Equipo'}</h4>
           </div>
-          <span className="text-xs shrink-0" style={{ color: 'var(--color-text-muted)' }}>
-            {active.length} en partido
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className="text-xs px-1.5 py-0.5 rounded font-medium"
+              style={{
+                color: overRoster ? '#ffffff' : 'var(--color-text-muted)',
+                backgroundColor: overRoster ? 'var(--color-danger)' : 'var(--color-bg-hover)',
+              }}
+              title={`Plantel del partido (max ${MAX_ROSTER_SIZE})`}
+            >
+              {active.length}/{MAX_ROSTER_SIZE}
+            </span>
+            <span
+              className="text-xs px-1.5 py-0.5 rounded font-medium"
+              style={{
+                color: overLibres ? '#ffffff' : 'var(--color-text-muted)',
+                backgroundColor: overLibres ? 'var(--color-danger)' : 'var(--color-bg-hover)',
+              }}
+              title={`Libres (max ${MAX_LIBRES_PER_MATCH})`}
+            >
+              L {libresActive.length}/{MAX_LIBRES_PER_MATCH}
+            </span>
+          </div>
         </div>
         <div className="text-[11px] mb-2 px-2 py-1 rounded flex items-center gap-1"
           style={{
@@ -205,6 +325,7 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
           {active.map(p => {
             const susp = suspended[p.id];
             const isCaptain = captainId === p.id;
+            const isLibre = libreIds.has(p.id);
             return (
               <div key={p.id} className="flex items-center gap-2">
                 <input
@@ -231,6 +352,19 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
                   title={isCaptain ? 'Capitan (click para quitar)' : 'Designar capitan'}
                 >
                   {isCaptain ? '★' : '☆'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => toggleLibre(p, teamId)}
+                  className="shrink-0 w-6 h-6 rounded flex items-center justify-center text-[11px] font-bold leading-none"
+                  style={{
+                    color: isLibre ? '#ffffff' : 'var(--color-text-muted)',
+                    border: `1px solid ${isLibre ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    backgroundColor: isLibre ? 'var(--color-primary)' : 'transparent',
+                  }}
+                  title={isLibre ? 'Libre (click para quitar marca)' : 'Marcar como libre'}
+                >
+                  L
                 </button>
                 <span className="flex-1 text-sm truncate" style={{ color: 'var(--color-text)' }}>
                   {p.firstName} {p.lastName}

@@ -20,6 +20,8 @@ dist-ssr
 .DS_Store
 .claude
 .firebase
+.firebase-emulator-data
+firebase-export-*
 Imagenes
 *.suo
 *.ntvs*

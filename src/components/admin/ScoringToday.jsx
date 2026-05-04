@@ -52,7 +52,7 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, players = [
       });
   }, [matches, todayKey]);
 
-  const confirmStartMatch = async (playerNumbers) => {
+  const confirmStartMatch = async (playerNumbers, captains = {}, libres = { home: [], away: [] }) => {
     const m = startingMatch;
     if (!m) return;
     const home = teamsMap[m.homeTeamId]?.name || 'TBD';
@@ -64,6 +64,9 @@ export default function ScoringToday({ matches, teamsMap, courtsMap, players = [
       awayScore: 0,
       startedAt: serverTimestamp(),
       playerNumbers,
+      homeCaptainId: captains.homeCaptainId || null,
+      awayCaptainId: captains.awayCaptainId || null,
+      libres: { home: libres.home || [], away: libres.away || [] },
       timeouts: { home: {}, away: {} },
       clockRunning: false,
       clockRemainingMs: 10 * 60 * 1000,

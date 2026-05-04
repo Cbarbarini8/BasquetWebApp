@@ -7,6 +7,7 @@ import { useCourts } from '../hooks/useCourts';
 import { useMatchClock } from '../hooks/useMatchClock';
 import { useMatchDetailData } from '../hooks/useMatchDetailData';
 import { aggregateStintsByPlayer, formatMinutes } from '../lib/stints';
+import { timeoutsUsedIn, timeoutsAllowedFor } from '../lib/timeouts';
 import PageShell from '../components/layout/PageShell';
 import TeamLogo from '../components/common/TeamLogo';
 import LiveBadge from '../components/common/LiveBadge';
@@ -19,6 +20,7 @@ const EVENT_LABELS = {
   'foul': 'Falta',
   'foulTech': 'Falta tecnica',
   'foulUnsport': 'Falta antideportiva',
+  'foulTechBench': 'Tec. al banco',
   'ejection': 'Expulsion',
   'assist': 'Asistencia',
   'offRebound': 'Reb. ofensivo',
@@ -26,6 +28,7 @@ const EVENT_LABELS = {
   'steal': 'Robo',
   'block': 'Tapon',
   'turnover': 'Perdida',
+  'timeout': 'Tiempo muerto',
 };
 
 const PERSONAL_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport'];
@@ -243,16 +246,18 @@ export default function MatchDetailPage() {
 
   const isLive = match.status === 'live';
   const isFinished = match.status === 'finished';
-  const homeWon = isFinished && (match.homeScore || 0) > (match.awayScore || 0);
-  const awayWon = isFinished && (match.awayScore || 0) > (match.homeScore || 0);
+  const isWalkover = match.status === 'walkover';
+  const homeWon = (isFinished || isWalkover) && (match.homeScore || 0) > (match.awayScore || 0);
+  const awayWon = (isFinished || isWalkover) && (match.awayScore || 0) > (match.homeScore || 0);
 
   const currentQuarter = match.quarter || 1;
   const teamFoulsQ = (teamId) =>
     events.filter(e => PERSONAL_FOUL_TYPES.includes(e.type) && e.teamId === teamId && (e.quarter || 1) === currentQuarter).length;
   const homeTeamFouls = isLive ? teamFoulsQ(match.homeTeamId) : 0;
   const awayTeamFouls = isLive ? teamFoulsQ(match.awayTeamId) : 0;
-  const homeTO = !!(match.timeouts?.home?.[currentQuarter]);
-  const awayTO = !!(match.timeouts?.away?.[currentQuarter]);
+  const homeTmUsed = timeoutsUsedIn(match, currentQuarter, 'home');
+  const awayTmUsed = timeoutsUsedIn(match, currentQuarter, 'away');
+  const tmAllowed = timeoutsAllowedFor(match.phase, currentQuarter).allowed;
 
   const formatDate = (d) => {
     if (!d) return '';
@@ -282,6 +287,11 @@ export default function MatchDetailPage() {
         )}
         {isFinished && (
           <p className="text-xs font-bold tracking-widest mb-2 opacity-70">FINAL</p>
+        )}
+        {isWalkover && (
+          <p className="text-xs font-bold tracking-widest mb-2" style={{ color: '#fbbf24' }}>
+            WALKOVER · {match.walkoverNoShow === 'home' ? (homeTeam?.name || 'Local') : (awayTeam?.name || 'Visitante')} no se presento
+          </p>
         )}
 
         {/* 2. Cuarto + Reloj */}
@@ -323,12 +333,12 @@ export default function MatchDetailPage() {
               <span
                 className="px-1.5 py-0.5 rounded font-medium"
                 style={{
-                  backgroundColor: homeTO ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.15)',
-                  color: homeTO ? '#111827' : '#ffffff',
+                  backgroundColor: homeTmUsed > 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.15)',
+                  color: homeTmUsed > 0 ? '#111827' : '#ffffff',
                 }}
-                title={`Tiempo muerto Q${currentQuarter} ${homeTO ? '(usado)' : '(disponible)'}`}
+                title={`Tiempos muertos Q${currentQuarter}: ${homeTmUsed}/${tmAllowed} usados`}
               >
-                {homeTO ? '● TO' : '○ TO'}
+                TM {homeTmUsed}/{tmAllowed}
               </span>
             </div>
             <span className="opacity-60">·</span>
@@ -336,12 +346,12 @@ export default function MatchDetailPage() {
               <span
                 className="px-1.5 py-0.5 rounded font-medium"
                 style={{
-                  backgroundColor: awayTO ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.15)',
-                  color: awayTO ? '#111827' : '#ffffff',
+                  backgroundColor: awayTmUsed > 0 ? 'rgba(255,255,255,0.85)' : 'rgba(255,255,255,0.15)',
+                  color: awayTmUsed > 0 ? '#111827' : '#ffffff',
                 }}
-                title={`Tiempo muerto Q${currentQuarter} ${awayTO ? '(usado)' : '(disponible)'}`}
+                title={`Tiempos muertos Q${currentQuarter}: ${awayTmUsed}/${tmAllowed} usados`}
               >
-                {awayTO ? '● TO' : '○ TO'}
+                TM {awayTmUsed}/{tmAllowed}
               </span>
               <span
                 className="px-1.5 py-0.5 rounded font-medium"
@@ -393,6 +403,10 @@ export default function MatchDetailPage() {
           <BoxScoreTable title={homeTeam?.name || 'Local'} team={homeTeam} playerStats={homeStats} />
           <BoxScoreTable title={awayTeam?.name || 'Visitante'} team={awayTeam} playerStats={awayStats} />
         </>
+      ) : isWalkover ? (
+        <p className="text-sm text-center py-6" style={{ color: 'var(--color-text-muted)' }}>
+          Partido no disputado (walkover). Resultado por reglamento: 20-0.
+        </p>
       ) : (
         <p className="text-sm text-center py-6" style={{ color: 'var(--color-text-muted)' }}>
           No hay estadisticas detalladas para este partido

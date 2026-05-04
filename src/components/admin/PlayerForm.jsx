@@ -6,6 +6,13 @@ import { uploadToCloudinary } from '../../lib/cloudinary';
 import { logAction } from '../../lib/audit';
 import { IconButton, EditIcon, DeleteIcon, LinkIcon, CheckIcon, XIcon, ImageIcon } from '../common/Icons';
 import { useToast } from '../../context/ToastContext';
+import PlayerBulkImport from './PlayerBulkImport';
+import {
+  computeAge,
+  categoryFor,
+  CATEGORY_LABEL,
+  TEAM_QUOTA,
+} from '../../lib/playerCategory';
 
 function PlayerPhoto({ url, name, size = 36 }) {
   if (!url) {
@@ -27,6 +34,7 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
   const [lastName, setLastName] = useState('');
   const [number, setNumber] = useState('');
   const [teamId, setTeamId] = useState('');
+  const [birthDate, setBirthDate] = useState('');
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -41,6 +49,7 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
     setLastName('');
     setNumber('');
     setTeamId('');
+    setBirthDate('');
     setPhotoFile(null);
     setPhotoPreview('');
     setEditingId(null);
@@ -54,18 +63,42 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
     setPhotoPreview(URL.createObjectURL(f));
   };
 
+  // Warning (no bloqueante) si el plantel del equipo supera el cupo de la
+  // categoria a la que cae el jugador con esta fecha de nacimiento. Bloqueante
+  // seria frustrante para correcciones; basta un toast.
+  const checkQuotaWarning = (targetTeamId, targetBirthDate, ignoreId) => {
+    const cat = categoryFor(targetBirthDate);
+    const quota = TEAM_QUOTA[cat];
+    if (quota === null) return null;
+    const futureCount = players.filter(p =>
+      p.teamId === targetTeamId &&
+      p.id !== ignoreId &&
+      categoryFor(p.birthDate) === cat
+    ).length + 1;
+    if (futureCount > quota) {
+      const team = teams.find(t => t.id === targetTeamId);
+      return `${team?.name || 'Equipo'} tendria ${futureCount} jugadores en categoria ${CATEGORY_LABEL[cat]} (cupo: ${quota}).`;
+    }
+    return null;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim() || !teamId) return;
     setUploading(true);
 
     try {
+      const cleanBirthDate = birthDate ? birthDate : '';
       const data = {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         number: parseInt(number) || 0,
         teamId,
+        birthDate: cleanBirthDate,
       };
+
+      const warning = checkQuotaWarning(teamId, cleanBirthDate, editingId);
+      if (warning) toast.warning(warning, 6000);
 
       if (editingId) {
         if (photoFile) {
@@ -104,6 +137,7 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
     setLastName(player.lastName);
     setNumber(String(player.number || ''));
     setTeamId(player.teamId);
+    setBirthDate(player.birthDate || '');
     setPhotoFile(null);
     setPhotoPreview(player.photoUrl || '');
     setEditingId(player.id);
@@ -209,6 +243,9 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
         </div>
       )}
 
+      {/* Bulk import (descarga template + carga masiva de fechas de nacimiento) */}
+      {canEdit && <PlayerBulkImport players={players} teams={teams} user={user} />}
+
       {/* Add/edit form */}
       {canEdit && <form onSubmit={handleSubmit} className="space-y-3 mb-6">
         <div className="flex flex-wrap gap-2">
@@ -223,6 +260,25 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
             <option value="">Equipo...</option>
             {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
           </select>
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={birthDate}
+              onChange={e => setBirthDate(e.target.value)}
+              title="Fecha de nacimiento"
+              className="px-3 py-2 rounded-md text-sm"
+              style={inputStyle}
+            />
+            {birthDate && (() => {
+              const age = computeAge(birthDate);
+              const cat = categoryFor(birthDate);
+              return (
+                <span className="text-xs whitespace-nowrap" style={{ color: 'var(--color-text-muted)' }}>
+                  {age != null ? `${age} a.` : ''} · {CATEGORY_LABEL[cat]}
+                </span>
+              );
+            })()}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {photoPreview && <PlayerPhoto url={photoPreview} name={firstName} size={40} />}
@@ -279,7 +335,13 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
 
       {/* Player list */}
       <div className="space-y-2">
-        {filteredPlayers.map(player => (
+        {filteredPlayers.map(player => {
+          const age = computeAge(player.birthDate);
+          const cat = categoryFor(player.birthDate);
+          const ageBadge = player.birthDate
+            ? `${age != null ? age + ' a.' : ''} · ${CATEGORY_LABEL[cat]}`
+            : 'sin fecha';
+          return (
           <div
             key={player.id}
             className="flex items-center justify-between px-4 py-3 rounded-md"
@@ -293,6 +355,13 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
                 </span>
                 <span className="ml-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
                   {teamMap[player.teamId] || ''}
+                </span>
+                <span
+                  className="ml-2 text-xs"
+                  style={{ color: player.birthDate ? 'var(--color-text-muted)' : 'var(--color-warning)' }}
+                  title={player.birthDate || 'Falta fecha de nacimiento'}
+                >
+                  {ageBadge}
                 </span>
                 {player.photoStatus === 'pending' && (
                   <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full text-white" style={{ backgroundColor: 'var(--color-warning)' }}>
@@ -310,7 +379,8 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
               </div>
             )}
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

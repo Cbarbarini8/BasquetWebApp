@@ -5,9 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:emulator": "vite --mode emulator",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "emulators": "firebase emulators:start --import=./.firebase-emulator-data --export-on-exit=./.firebase-emulator-data",
+    "emulators:fresh": "firebase emulators:start --export-on-exit=./.firebase-emulator-data",
+    "seed:emulator": "node scripts/seed-emulator.mjs",
+    "seed:triple-tie": "node scripts/seed-triple-tie.mjs"
   },
   "dependencies": {
     "firebase": "^12.11.0",

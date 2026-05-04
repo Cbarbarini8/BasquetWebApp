@@ -1,11 +1,16 @@
 import { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  timeoutsUsedIn,
+  timeoutsAllowedFor,
+  timeoutsAvailableNow,
+} from '../../lib/timeouts';
 
 // UI compacta (celular landscape) para carga de stats en vivo.
 // Flujo: el usuario arma un evento tocando el grid central y despues toca
 // al jugador de cualquier equipo para imputar el evento.
 
-function Jersey({ player, fouls, color, armed, onClick, isCaptain }) {
+function Jersey({ player, fouls, color, armed, onClick, isCaptain, isLibre }) {
   const containerRef = useRef(null);
   const handleClick = () => {
     if (!armed || !containerRef.current) { onClick?.(); return; }
@@ -52,6 +57,15 @@ function Jersey({ player, fouls, color, armed, onClick, isCaptain }) {
           ★
         </span>
       )}
+      {isLibre && (
+        <span
+          className="absolute bottom-0 right-0.5 font-bold leading-none text-[8px] px-0.5 rounded"
+          style={{ backgroundColor: 'var(--color-primary)', color: '#ffffff' }}
+          title="Jugador libre"
+        >
+          L
+        </span>
+      )}
       <span className="font-bold leading-none text-lg">#{player.number}</span>
       <span className="truncate max-w-full text-[9px] leading-tight mt-0.5" style={{ opacity: 0.9 }}>
         {player.lastName}
@@ -72,29 +86,28 @@ function EmptyJerseySlot() {
   );
 }
 
-function TimeoutButton({ used, onClick, disabled, title }) {
+function TimeoutButton({ used, allowed, atCap, onClick, disabled, title }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || atCap}
       title={title}
-      className="w-[18px] h-[18px] rounded-full inline-flex items-center justify-center font-bold leading-none transition-colors active:scale-90 disabled:cursor-default"
+      className="px-1.5 h-[18px] rounded inline-flex items-center justify-center font-bold leading-none transition-colors active:scale-90 disabled:opacity-60 disabled:cursor-default"
       style={{
         border: '1.5px solid rgba(255,255,255,0.6)',
-        background: used ? 'var(--color-primary)' : 'transparent',
-        borderColor: used ? 'var(--color-primary)' : 'rgba(255,255,255,0.6)',
-        color: used ? '#ffffff' : 'rgba(255,255,255,0.9)',
-        fontSize: 10,
-        padding: 0,
+        background: used > 0 ? 'var(--color-primary)' : 'transparent',
+        borderColor: used > 0 ? 'var(--color-primary)' : 'rgba(255,255,255,0.6)',
+        color: used > 0 ? '#ffffff' : 'rgba(255,255,255,0.9)',
+        fontSize: 9.5,
       }}
     >
-      T
+      T {used}/{allowed}
     </button>
   );
 }
 
-function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, onTogglePlayer, onClose, ejectionReason, captainId, playerPersonalFouls = {} }) {
+function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, onTogglePlayer, onClose, ejectionReason, captainId, playerPersonalFouls = {}, libreIds = [] }) {
   return (
     <div className="absolute inset-0 z-40 flex items-end">
       <div
@@ -151,6 +164,15 @@ function CourtEditorSheet({ side, teamName, teamColor, allPlayers, onCourtIds, o
                 >
                   {captainId === p.id && (
                     <span className="absolute top-0.5 left-0.5 text-[11px] font-bold leading-none" style={{ color: '#f59e0b' }}>★</span>
+                  )}
+                  {libreIds.includes(p.id) && (
+                    <span
+                      className="absolute bottom-0.5 right-0.5 text-[8px] font-bold leading-none px-0.5 rounded"
+                      style={{ backgroundColor: 'var(--color-primary)', color: '#ffffff' }}
+                      title="Jugador libre"
+                    >
+                      L
+                    </span>
                   )}
                   {fouls > 0 && (
                     <span
@@ -216,7 +238,7 @@ export default function CompactScoringUI({
   onCancelClockEdit,
   onToggleClock,
   onUpdateQuarter,
-  onToggleTimeout,
+  onAddTimeout,
   // event handlers
   onAddEvent,
   onAddBenchTech,
@@ -233,8 +255,11 @@ export default function CompactScoringUI({
   const sheetSide = editingCourt?.home ? 'home' : editingCourt?.away ? 'away' : null;
 
   const currentQuarter = match.quarter || 1;
-  const homeTimeoutUsed = !!(match.timeouts?.home?.[currentQuarter]);
-  const awayTimeoutUsed = !!(match.timeouts?.away?.[currentQuarter]);
+  const tmAllowed = timeoutsAllowedFor(match.phase, currentQuarter).allowed;
+  const homeTmUsed = timeoutsUsedIn(match, currentQuarter, 'home');
+  const awayTmUsed = timeoutsUsedIn(match, currentQuarter, 'away');
+  const homeTmAtCap = timeoutsAvailableNow(match, currentQuarter, 'home') === 0;
+  const awayTmAtCap = timeoutsAvailableNow(match, currentQuarter, 'away') === 0;
   const homeBonus = homeTeamFouls >= 4;
   const awayBonus = awayTeamFouls >= 4;
   const homeBenchN = benchTechByTeam[match.homeTeamId] || 0;
@@ -270,6 +295,7 @@ export default function CompactScoringUI({
     const players = side === 'home' ? onCourtHomePlayers : onCourtAwayPlayers;
     const color = side === 'home' ? homeColor : awayColor;
     const captainId = side === 'home' ? homeCaptainId : awayCaptainId;
+    const sideLibres = side === 'home' ? (match.libres?.home || []) : (match.libres?.away || []);
     return (
       <div className="relative grid grid-rows-5 gap-1 min-h-0">
         {Array.from({ length: 5 }).map((_, i) => {
@@ -284,6 +310,7 @@ export default function CompactScoringUI({
               armed={!!armed}
               onClick={() => onJerseyTap(side, p.id)}
               isCaptain={captainId === p.id}
+              isLibre={sideLibres.includes(p.id)}
             />
           );
         })}
@@ -347,10 +374,12 @@ export default function CompactScoringUI({
                 F {Math.min(homeTeamFouls, 5)}/5{homeBonus ? ' · BONUS' : ''}
               </span>
               <TimeoutButton
-                used={homeTimeoutUsed}
-                onClick={() => onToggleTimeout('home')}
+                used={homeTmUsed}
+                allowed={tmAllowed}
+                atCap={homeTmAtCap}
+                onClick={() => onAddTimeout('home')}
                 disabled={!canEdit}
-                title={`Tiempo muerto Q${currentQuarter} ${homeTimeoutUsed ? '(usado)' : '(disponible)'}`}
+                title={homeTmAtCap ? `Sin TMs disponibles (${homeTmUsed}/${tmAllowed} en Q${currentQuarter})` : `Sumar TM Q${currentQuarter} (${homeTmUsed}/${tmAllowed} usados)`}
               />
               {canEdit && onAddBenchTech && (
                 <button
@@ -474,10 +503,12 @@ export default function CompactScoringUI({
                 F {Math.min(awayTeamFouls, 5)}/5{awayBonus ? ' · BONUS' : ''}
               </span>
               <TimeoutButton
-                used={awayTimeoutUsed}
-                onClick={() => onToggleTimeout('away')}
+                used={awayTmUsed}
+                allowed={tmAllowed}
+                atCap={awayTmAtCap}
+                onClick={() => onAddTimeout('away')}
                 disabled={!canEdit}
-                title={`Tiempo muerto Q${currentQuarter} ${awayTimeoutUsed ? '(usado)' : '(disponible)'}`}
+                title={awayTmAtCap ? `Sin TMs disponibles (${awayTmUsed}/${tmAllowed} en Q${currentQuarter})` : `Sumar TM Q${currentQuarter} (${awayTmUsed}/${tmAllowed} usados)`}
               />
               {canEdit && onAddBenchTech && (
                 <button
@@ -603,6 +634,7 @@ export default function CompactScoringUI({
           ejectionReason={ejectionReason}
           captainId={sheetSide === 'home' ? homeCaptainId : awayCaptainId}
           playerPersonalFouls={playerPersonalFouls}
+          libreIds={sheetSide === 'home' ? (match.libres?.home || []) : (match.libres?.away || [])}
         />
       )}
     </div>

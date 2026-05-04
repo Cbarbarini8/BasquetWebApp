@@ -6,6 +6,14 @@ import { logStatsParticipation } from '../../lib/audit';
 import { useToast } from '../../context/ToastContext';
 import { useMatchClock, defaultQuarterMs, pausedRemainingFromMatch, formatClock } from '../../hooks/useMatchClock';
 import { closeOpenStintToBatch, buildOpenStint } from '../../lib/stints';
+import { categoryFor, CATEGORY_YOUNG, CATEGORY_LABEL, ON_COURT_QUOTA } from '../../lib/playerCategory';
+import {
+  timeoutsUsedIn,
+  timeoutsAllowedFor,
+  timeoutsAvailableNow,
+  timeoutFieldPath,
+  planBenchTechTimeoutPenalty,
+} from '../../lib/timeouts';
 import CompactScoringUI from './CompactScoringUI';
 
 // Orden 4x4 por categoria con paleta familia:
@@ -47,6 +55,7 @@ const EVENT_LABELS = {
   'steal': 'Robo',
   'block': 'Tapon',
   'turnover': 'Perdida',
+  'timeout': 'Tiempo muerto',
 };
 
 // Faltas que suman al jugador (bonus 5).
@@ -56,11 +65,15 @@ const TEAM_FOUL_TYPES = ['foul', 'foulTech', 'foulUnsport', 'foulTechBench'];
 const FLAGRANT_FOUL_TYPES = ['foulTech', 'foulUnsport'];
 const PERSONAL_FOUL_LIMIT = 5;
 const FLAGRANT_FOUL_LIMIT = 2;
+// Reglamento: doble tecnica = expulsion + 1 fecha; tecnica+antideportiva o
+// doble antideportiva = expulsion sin suspension. Solo el caso doble tecnica
+// emite un evento `ejection` automatico con `suspensionMatches`.
+const DOUBLE_TECH_SUSPENSION_MATCHES = 1;
 const BENCH_TECH_LIMIT = 2;
 
 const MAX_ON_COURT = 5;
 
-function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0, isCaptain = false }) {
+function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0, isCaptain = false, isLibre = false }) {
   return (
     <button
       type="button"
@@ -97,6 +110,15 @@ function PlayerJersey({ player, selected, onClick, compact = false, fouls = 0, i
           title="Capitan"
         >
           ★
+        </span>
+      )}
+      {isLibre && (
+        <span
+          className={`absolute font-bold leading-none rounded ${compact ? 'bottom-0 right-0 text-[8px] px-0.5' : 'bottom-0.5 right-0.5 text-[10px] px-1'}`}
+          style={{ backgroundColor: 'var(--color-primary)', color: '#ffffff' }}
+          title="Jugador libre"
+        >
+          L
         </span>
       )}
       <span className={`font-bold leading-none ${compact ? 'text-base' : 'text-2xl'}`}>
@@ -213,17 +235,21 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   const homeCaptainId = match.homeCaptainId || null;
   const awayCaptainId = match.awayCaptainId || null;
 
-  const { playerPersonalFouls, playerFlagrantFouls, ejectedPlayers, benchTechByTeam } = useMemo(() => {
+  const { playerPersonalFouls, playerTechFouls, playerUnsportFouls, ejectedPlayers, benchTechByTeam } = useMemo(() => {
     const personal = {};
-    const flagrant = {};
+    const tech = {};
+    const unsport = {};
     const ejected = new Set();
     const benchTech = {};
     events.forEach(e => {
       if (PERSONAL_FOUL_TYPES.includes(e.type) && e.playerId) {
         personal[e.playerId] = (personal[e.playerId] || 0) + 1;
       }
-      if (FLAGRANT_FOUL_TYPES.includes(e.type) && e.playerId) {
-        flagrant[e.playerId] = (flagrant[e.playerId] || 0) + 1;
+      if (e.type === 'foulTech' && e.playerId) {
+        tech[e.playerId] = (tech[e.playerId] || 0) + 1;
+      }
+      if (e.type === 'foulUnsport' && e.playerId) {
+        unsport[e.playerId] = (unsport[e.playerId] || 0) + 1;
       }
       if (e.type === 'ejection' && e.playerId) {
         ejected.add(e.playerId);
@@ -232,12 +258,18 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
         benchTech[e.teamId] = (benchTech[e.teamId] || 0) + 1;
       }
     });
-    return { playerPersonalFouls: personal, playerFlagrantFouls: flagrant, ejectedPlayers: ejected, benchTechByTeam: benchTech };
+    return { playerPersonalFouls: personal, playerTechFouls: tech, playerUnsportFouls: unsport, ejectedPlayers: ejected, benchTechByTeam: benchTech };
   }, [events]);
 
   const ejectionReason = (playerId) => {
     if (ejectedPlayers.has(playerId)) return 'expulsion directa';
-    if ((playerFlagrantFouls[playerId] || 0) >= FLAGRANT_FOUL_LIMIT) return '2 faltas tecnicas/antideportivas';
+    const tech = playerTechFouls[playerId] || 0;
+    const unsport = playerUnsportFouls[playerId] || 0;
+    if (tech + unsport >= FLAGRANT_FOUL_LIMIT) {
+      if (tech >= 2) return '2 tecnicas';
+      if (unsport >= 2) return '2 antideportivas';
+      return 'tecnica + antideportiva';
+    }
     if ((playerPersonalFouls[playerId] || 0) >= PERSONAL_FOUL_LIMIT) return '5 faltas';
     return null;
   };
@@ -248,12 +280,33 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   const homeTeamFouls = teamFoulsQ(match.homeTeamId);
   const awayTeamFouls = teamFoulsQ(match.awayTeamId);
 
-  const toggleTimeout = async (side) => {
+  // Agrega un TM al cuarto actual (escribe evento + incrementa contador). Si
+  // no hay disponibilidad segun el cupo de la fase, muestra error.
+  const addTimeoutEvent = async (side, opts = {}) => {
     if (!canEdit) return;
-    const current = !!(match.timeouts?.[side]?.[currentQuarter]);
-    await updateDoc(doc(db, 'matches', match.id), {
-      [`timeouts.${side}.${currentQuarter}`]: !current,
+    const teamId = side === 'home' ? match.homeTeamId : match.awayTeamId;
+    const q = currentQuarter;
+    const available = timeoutsAvailableNow(match, q, side);
+    if (available <= 0 && !opts.forcePenalty) {
+      const { allowed } = timeoutsAllowedFor(match.phase, q);
+      toast.warning(`Sin TMs disponibles en Q${q} (cupo: ${allowed}).`);
+      return;
+    }
+    const used = timeoutsUsedIn(match, q, side);
+    const batch = writeBatch(db);
+    const eventRef = doc(collection(db, `matches/${match.id}/events`));
+    const eventData = {
+      type: 'timeout',
+      teamId,
+      quarter: q,
+      timestamp: serverTimestamp(),
+    };
+    if (opts.byBenchTechPenalty) eventData.byBenchTechPenalty = true;
+    batch.set(eventRef, eventData);
+    batch.update(doc(db, 'matches', match.id), {
+      [timeoutFieldPath(side, q)]: used + 1,
     });
+    await batch.commit();
     if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
   };
 
@@ -274,6 +327,23 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     if (!isOn && currentIds.length >= MAX_ON_COURT) {
       toast.warning(`Maximo ${MAX_ON_COURT} jugadores en cancha. Sacar uno primero.`);
       return;
+    }
+    // Reglamento: maximo 2 jugadores 20-25 simultaneos en cancha (por equipo).
+    // Solo bloquea cuando el jugador entrante tiene fecha cargada — con la
+    // regla de gracia (sin birthDate => +30) los legacy no participan del cupo.
+    if (!isOn) {
+      const sidePlayers = side === 'home' ? homePlayers : awayPlayers;
+      const incomingPlayer = sidePlayers.find(p => p.id === playerId);
+      if (incomingPlayer && categoryFor(incomingPlayer.birthDate) === CATEGORY_YOUNG) {
+        const youngOnCourt = currentIds.filter(id => {
+          const p = sidePlayers.find(x => x.id === id);
+          return p && categoryFor(p.birthDate) === CATEGORY_YOUNG;
+        }).length;
+        if (youngOnCourt >= ON_COURT_QUOTA[CATEGORY_YOUNG]) {
+          toast.warning(`Maximo ${ON_COURT_QUOTA[CATEGORY_YOUNG]} jugadores ${CATEGORY_LABEL[CATEGORY_YOUNG]} en cancha por equipo. Sacar uno primero.`);
+          return;
+        }
+      }
     }
     const newIds = isOn ? currentIds.filter(id => id !== playerId) : [...currentIds, playerId];
     const batch = writeBatch(db);
@@ -385,20 +455,41 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     }
 
     // Si este evento deja al jugador expulsado por acumulacion, sacarlo de
-    // cancha y abrir seleccion de reemplazo. La acumulacion (5 personales o
-    // 2 flagrantes) saca del partido pero NO suspende fechas: esa logica vive
-    // en suspensions.js que solo mira eventos `ejection`.
+    // cancha y abrir seleccion de reemplazo. Reglas del reglamento:
+    //  - 5 faltas personales -> expulsa, sin suspension.
+    //  - 2 tecnicas (foulTech) -> expulsa Y suma 1 fecha de suspension. Para
+    //    que `suspensions.js` la detecte, emitimos un evento `ejection`
+    //    automatico con suspensionMatches=1.
+    //  - tecnica + antideportiva o 2 antideportivas -> expulsa, sin suspension.
     const isFoulType = PERSONAL_FOUL_TYPES.includes(eventDef.type);
     const isFlagrantType = FLAGRANT_FOUL_TYPES.includes(eventDef.type);
+    const isTechType = eventDef.type === 'foulTech';
     const nextPersonal = isFoulType ? (playerPersonalFouls[playerId] || 0) + 1 : (playerPersonalFouls[playerId] || 0);
-    const nextFlagrant = isFlagrantType ? (playerFlagrantFouls[playerId] || 0) + 1 : (playerFlagrantFouls[playerId] || 0);
+    const nextTech = isTechType ? (playerTechFouls[playerId] || 0) + 1 : (playerTechFouls[playerId] || 0);
+    const nextUnsport = eventDef.type === 'foulUnsport' ? (playerUnsportFouls[playerId] || 0) + 1 : (playerUnsportFouls[playerId] || 0);
+    const nextFlagrantTotal = nextTech + nextUnsport;
     const willReachFive = isFoulType && nextPersonal >= PERSONAL_FOUL_LIMIT;
-    const willReachTwoFlagrant = isFlagrantType && nextFlagrant >= FLAGRANT_FOUL_LIMIT;
+    const willReachTwoFlagrant = isFlagrantType && nextFlagrantTotal >= FLAGRANT_FOUL_LIMIT;
+    const willTriggerDoubleTechSuspension = isTechType && nextTech >= 2;
     const willBeEjected = willReachFive || willReachTwoFlagrant;
 
     if (willBeEjected) {
       const matchUpdates = {};
       applyEjectionSideEffects(batch, matchUpdates, side, playerId);
+
+      if (willTriggerDoubleTechSuspension) {
+        const autoEjectionRef = doc(collection(db, `matches/${match.id}/events`));
+        batch.set(autoEjectionRef, {
+          type: 'ejection',
+          playerId,
+          teamId,
+          quarter: match.quarter || 1,
+          suspensionMatches: DOUBLE_TECH_SUSPENSION_MATCHES,
+          autoFromDoubleTech: true,
+          timestamp: serverTimestamp(),
+        });
+      }
+
       if (Object.keys(matchUpdates).length > 0) {
         batch.update(doc(db, 'matches', match.id), matchUpdates);
       }
@@ -410,7 +501,11 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       const label = getPlayerLabel(playerId);
       setSelectedPlayer(prev => ({ ...prev, [side]: '' }));
       setEditingCourt(prev => ({ ...prev, [side]: true }));
-      const reason = willReachTwoFlagrant ? '2 faltas tecnicas/antideportivas' : '5 faltas';
+      let reason;
+      if (willTriggerDoubleTechSuspension) reason = '2 tecnicas: 1 fecha de suspension';
+      else if (willReachTwoFlagrant && nextUnsport >= 2) reason = '2 antideportivas';
+      else if (willReachTwoFlagrant) reason = 'tecnica + antideportiva';
+      else reason = '5 faltas';
       toast.error(`${label} sale del partido (${reason}). Debe ser reemplazado.`, 6000);
     }
 
@@ -420,6 +515,10 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
   // Falta tecnica al banco (sin jugador). A la 2da del partido del mismo
   // equipo, expulsa al capitan automaticamente con 1 fecha de suspension; si
   // el capitan ya esta expulsado, solo avisa.
+  // Reglamento: cada tecnica al banco hace perder 1 TM (cuarto actual o
+  // siguiente). En Q4 o sin disponibilidad: queda diferida al proximo
+  // partido (TODO: esa parte no esta implementada en este MVP, solo se
+  // notifica con toast warning).
   const addBenchTechFoul = async (side) => {
     if (!canEdit) return;
     const teamId = side === 'home' ? match.homeTeamId : match.awayTeamId;
@@ -429,6 +528,9 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       previousBenchTechs + 1 >= BENCH_TECH_LIMIT &&
       captainId &&
       !ejectionReason(captainId);
+
+    // Planificar penalty ANTES del batch, mirando el estado actual del match.
+    const tmPenalty = planBenchTechTimeoutPenalty(match, currentQuarter, side);
 
     const batch = writeBatch(db);
 
@@ -456,6 +558,19 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       applyEjectionSideEffects(batch, matchUpdates, side, captainId);
     }
 
+    if (tmPenalty.applied) {
+      const tmEventRef = doc(collection(db, `matches/${match.id}/events`));
+      batch.set(tmEventRef, {
+        type: 'timeout',
+        teamId,
+        quarter: tmPenalty.atQuarter,
+        byBenchTechPenalty: true,
+        timestamp: serverTimestamp(),
+      });
+      const usedAtQ = timeoutsUsedIn(match, tmPenalty.atQuarter, side);
+      matchUpdates[timeoutFieldPath(side, tmPenalty.atQuarter)] = usedAtQ + 1;
+    }
+
     if (Object.keys(matchUpdates).length > 0) {
       batch.update(doc(db, 'matches', match.id), matchUpdates);
     }
@@ -475,6 +590,16 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       toast.info(`Tecnica al banco de ${teamName || 'el equipo'} (${previousBenchTechs + 1}/${BENCH_TECH_LIMIT}).`);
     }
 
+    // Aviso del impacto en TMs (separado para que sea facil de notar).
+    if (tmPenalty.applied) {
+      const detail = tmPenalty.atQuarter === currentQuarter
+        ? `Q${tmPenalty.atQuarter} (este cuarto)`
+        : `Q${tmPenalty.atQuarter} (proximo cuarto)`;
+      toast.warning(`${teamName || 'Equipo'}: pierde 1 TM en ${detail} por la tecnica al banco.`, 5000);
+    } else if (tmPenalty.deferred) {
+      toast.warning(`${teamName || 'Equipo'}: penalty de TM por tecnica al banco queda pendiente para el proximo partido (registrar manualmente).`, 6000);
+    }
+
     if (user) await logStatsParticipation(user, match.id, `${homeTeam?.name || 'Local'} vs ${awayTeam?.name || 'Visitante'}`);
   };
 
@@ -490,6 +615,15 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       const points = event.type === '2pt' ? 2 : event.type === '3pt' ? 3 : 1;
       const scoreField = event.teamId === match.homeTeamId ? 'homeScore' : 'awayScore';
       batch.update(doc(db, 'matches', match.id), { [scoreField]: increment(-points) });
+    }
+
+    if (event.type === 'timeout') {
+      const side = event.teamId === match.homeTeamId ? 'home' : 'away';
+      const q = event.quarter;
+      const used = timeoutsUsedIn(match, q, side);
+      batch.update(doc(db, 'matches', match.id), {
+        [timeoutFieldPath(side, q)]: Math.max(0, used - 1),
+      });
     }
 
     await batch.commit();
@@ -595,10 +729,15 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
     const teamEvents = events.filter(e => e.teamId === (side === 'home' ? match.homeTeamId : match.awayTeamId));
     const lastEvent = teamEvents[0];
     const teamFouls = side === 'home' ? homeTeamFouls : awayTeamFouls;
-    const timeoutUsed = !!(match.timeouts?.[side]?.[currentQuarter]);
+    const tmUsed = timeoutsUsedIn(match, currentQuarter, side);
+    const tmAllowed = timeoutsAllowedFor(match.phase, currentQuarter).allowed;
+    const tmAvailable = timeoutsAvailableNow(match, currentQuarter, side);
+    const tmAtCap = tmAvailable === 0;
     const inBonus = teamFouls >= 4;
     const captainId = side === 'home' ? homeCaptainId : awayCaptainId;
     const benchN = benchTechBadge(side === 'home' ? match.homeTeamId : match.awayTeamId);
+    const sideLibres = side === 'home' ? (match.libres?.home || []) : (match.libres?.away || []);
+    const isPlayerLibre = (id) => sideLibres.includes(id);
 
     return (
       <div className={`flex-1 ${compact ? 'min-w-0' : 'min-w-[280px]'}`}>
@@ -634,17 +773,17 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
           </span>
           <button
             type="button"
-            onClick={() => toggleTimeout(side)}
-            disabled={!canEdit}
-            className="px-1.5 py-0.5 rounded font-medium disabled:cursor-default"
+            onClick={() => addTimeoutEvent(side)}
+            disabled={!canEdit || tmAtCap}
+            className="px-1.5 py-0.5 rounded font-medium disabled:opacity-60 disabled:cursor-default"
             style={{
-              backgroundColor: timeoutUsed ? 'var(--color-primary)' : 'transparent',
-              color: timeoutUsed ? '#ffffff' : 'var(--color-text-secondary)',
+              backgroundColor: tmUsed > 0 ? 'var(--color-primary)' : 'transparent',
+              color: tmUsed > 0 ? '#ffffff' : 'var(--color-text-secondary)',
               border: '1px solid var(--color-border)',
             }}
-            title={`Tiempo muerto Q${currentQuarter} ${timeoutUsed ? '(usado)' : '(disponible)'}`}
+            title={tmAtCap ? `Sin TMs disponibles (${tmUsed}/${tmAllowed} usados en Q${currentQuarter})` : `Sumar TM Q${currentQuarter} (${tmUsed}/${tmAllowed} usados). Para deshacer usar el feed de eventos.`}
           >
-            {timeoutUsed ? '● TO' : '○ TO'}
+            TM {tmUsed}/{tmAllowed}
           </button>
           {canEdit && (
             <button
@@ -686,6 +825,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     compact
                     fouls={playerPersonalFouls[p.id] || 0}
                     isCaptain={captainId === p.id}
+                    isLibre={isPlayerLibre(p.id)}
                   />
                 );
               })}
@@ -734,6 +874,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                         compact
                         fouls={playerPersonalFouls[p.id] || 0}
                         isCaptain={captainId === p.id}
+                        isLibre={isPlayerLibre(p.id)}
                       />
                     );
                   })}
@@ -768,6 +909,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
                     compact={compact}
                     fouls={playerPersonalFouls[p.id] || 0}
                     isCaptain={captainId === p.id}
+                    isLibre={isPlayerLibre(p.id)}
                   />
                 ))}
               </div>
@@ -904,7 +1046,7 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
           onCancelClockEdit={() => setEditingClock(false)}
           onToggleClock={toggleClock}
           onUpdateQuarter={updateQuarter}
-          onToggleTimeout={toggleTimeout}
+          onAddTimeout={addTimeoutEvent}
           onAddEvent={addEvent}
           onAddBenchTech={addBenchTechFoul}
           onUndoEvent={undoEvent}

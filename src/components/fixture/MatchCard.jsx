@@ -9,7 +9,8 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
   const isLive = match.status === 'live';
   const isFinished = match.status === 'finished';
   const isScheduled = match.status === 'scheduled';
-  const isClickable = isLive || isFinished;
+  const isWalkover = match.status === 'walkover';
+  const isClickable = isLive || isFinished || isWalkover;
 
   const handleCopyLink = (e) => {
     e.stopPropagation();
@@ -65,16 +66,16 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
             <>
               <div className="flex items-center gap-3">
                 <span className="text-2xl font-bold" style={{
-                  color: isFinished && (match.homeScore || 0) > (match.awayScore || 0) ? 'var(--color-success)' :
-                         isFinished && (match.homeScore || 0) < (match.awayScore || 0) ? 'var(--color-text-muted)' :
+                  color: (isFinished || isWalkover) && (match.homeScore || 0) > (match.awayScore || 0) ? 'var(--color-success)' :
+                         (isFinished || isWalkover) && (match.homeScore || 0) < (match.awayScore || 0) ? 'var(--color-text-muted)' :
                          'var(--color-text)',
                 }}>
                   {match.homeScore || 0}
                 </span>
                 <span className="text-sm font-medium" style={{ color: 'var(--color-text-muted)' }}>-</span>
                 <span className="text-2xl font-bold" style={{
-                  color: isFinished && (match.awayScore || 0) > (match.homeScore || 0) ? 'var(--color-success)' :
-                         isFinished && (match.awayScore || 0) < (match.homeScore || 0) ? 'var(--color-text-muted)' :
+                  color: (isFinished || isWalkover) && (match.awayScore || 0) > (match.homeScore || 0) ? 'var(--color-success)' :
+                         (isFinished || isWalkover) && (match.awayScore || 0) < (match.homeScore || 0) ? 'var(--color-text-muted)' :
                          'var(--color-text)',
                 }}>
                   {match.awayScore || 0}
@@ -93,6 +94,15 @@ export default function MatchCard({ match, homeTeam, awayTeam, court }) {
               {isFinished && (
                 <span className="text-xs font-medium mt-1" style={{ color: 'var(--color-text-muted)' }}>
                   FINAL
+                </span>
+              )}
+              {isWalkover && (
+                <span
+                  className="text-xs font-bold mt-1 px-1.5 py-0.5 rounded text-white"
+                  style={{ backgroundColor: 'var(--color-warning)' }}
+                  title="Walkover: el equipo ausente perdio 20-0"
+                >
+                  WO
                 </span>
               )}
             </>
