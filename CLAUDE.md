@@ -196,6 +196,31 @@ Helpers: `timeoutsUsedIn(match, q, side)` (tolerates boolean legacy data), `time
 
 `PlayerBulkImport.jsx` handles CSV download/upload for filling birthDates in bulk: download exports headers `ID,Equipo,Nombre,Apellido,Numero,FechaNacimiento` (UTF-8 BOM so Excel respects accents); upload accepts `yyyy-mm-dd`, `dd/mm/yyyy`, or `dd-mm-yyyy` and shows a preview with valid changes / parse errors / unmatched IDs before committing in 400-op batches.
 
+### Playoffs (Apertura 2026 — auto-seed bracket)
+`src/lib/playoffs.js` codifica el bracket de 10 equipos del reglamento (2 play-in + 4 cuartos + 2 semis + 1 final).
+
+**Data model**: cada match doc del playoff lleva tres campos extra:
+- `bracketSlot`: uno de `pi-1`/`pi-2`/`qf-1`..`qf-4`/`sf-1`/`sf-2`/`final` — identifica el cruce.
+- `homeSeedRef`/`awaySeedRef`: objetos `{ type, ... }` que describen *de dónde sale* el equipo (no el teamId directo). Tipos:
+  - `{ type: 'rank', position: N }` — N-ésimo de la tabla general (1..10).
+  - `{ type: 'playInWinnerReorder', reorderedPosition: 7|8 }` — ganadores de play-in reordenados por seed (7° = mejor seed, 8° = peor). **Este es el único reseed por tabla del bracket.**
+  - `{ type: 'matchWinner', slot: '<bracket-slot>' }` — ganador directo de otro slot. **De cuartos en adelante el bracket es estático** (formato oficial del cliente): `sf-1`=G(`qf-3`,1v8) vs G(`qf-1`,4v5), `sf-2`=G(`qf-4`,2v7) vs G(`qf-2`,3v6), `final`=G(`sf-1`) vs G(`sf-2`). El local nominal sale del lado de mejor seed (sf-1, sf-2 home = lado del 1°/2°), pero la sede se confirma manual.
+- El doc de la **temporada** guarda `playoffSeeds: [teamId1..teamId10]` (snapshot ordenado al momento de generar). `resolveSeedToTeamId` lee de ese snapshot, no de la tabla "viva" — así el bracket se mantiene estable si se edita un partido regular después.
+
+**Generación**: `PlayoffGenerator` (tab Fixture en admin) habilita el botón solo cuando todos los regulares están finished/walkover y hay ≥10 equipos en standings. Al confirmar el seeding, escribe `playoffSeeds` en season + los 9 docs en `matches` con seedRefs. Los 4 partidos sin dependencias (play-in + 4°v5° + 3°v6°) ya nacen con `homeTeamId`/`awayTeamId` materializados; los otros 5 con `null`.
+
+**Propagación (`propagateBracket`)**: se invoca después del commit principal de `MatchManager.finishMatch` y `markWalkover`. Para cada match del playoff con teamId null y seedRef seteada, intenta resolver y escribir. Idempotente. Falla silenciosamente (loguea) si la season no tiene seeds o no hay matches del bracket. **Limitación conocida v1**: si el admin edita el score de un partido del bracket ya finalizado y eso cambia el ganador, los downstream materializados quedan stale — hay que resetear manualmente.
+
+**UI bracket** (`src/components/playoffs/PlayoffBracket.jsx`): 4 columnas (Play-in / Cuartos / Semis / Final) con cada slot mostrando equipos resueltos o un placeholder derivado de `seedLabel(seedRef)`. Las líneas conectoras se dibujan con SVG (paths absolute-positioned dentro del wrapper scrollable, calculados via `useLayoutEffect` + `ResizeObserver`) siguiendo `CONNECTIONS` (const en el componente). Como el bracket es estático de cuartos en adelante, **las líneas qf→sf→final son precisas**; solo las líneas play-in→cuartos son indicativas (el reseed 7/8 define qué play-in alimenta `qf-3`/`qf-4`). Por eso únicamente `qf-3`/`qf-4` llevan el tag visual "Reord.".
+
+**FixturePage** tiene tabs Fase regular / Playoffs (`useState`, default calculado: Playoffs si todos los regulares están finished/walkover y hay matches del bracket, sino Regular). La tab Playoffs solo aparece si hay matches con `bracketSlot` para la temporada activa. La lista de fechas regulares filtra fuera los partidos del bracket (`m.bracketSlot` truthy). El `<select>` de fechas vive debajo de las tabs (solo visible en vista regular) para que el header no salte al cambiar entre tabs.
+
+**MatchManager** replica el mismo patrón de tabs. En vista Playoffs agrupa por `phase` (no por `round`) y los headers son `PHASE_HEADER` (Play-in / Cuartos de final / Semifinales / Final) en lugar de "Fecha N". El botón "Agregar partido manual" solo aparece en vista regular.
+
+**Constantes parametrizables**: `PLAYOFF_TEAM_COUNT` y `PLAYOFF_TEMPLATE` están exportadas — si en una temporada futura cambia el formato (8 equipos sin play-in, etc.), conviene crear un template nuevo en vez de parametrizar el existente.
+
+**Botón "Iniciar" en MatchManager**: se deshabilita si el match del bracket no tiene ambos teamIds (todavía espera resolución de ronda previa). El admin sí puede asignar fecha/horario antes de eso.
+
 ### Automatic Suspensions
 `src/lib/suspensions.js`: only `ejection` events suspend future matches. Each `ejection` carries `suspensionMatches: N` (set via the modal in `LiveScoring`, default 1, min 1, no max). Events without that field (legacy data) default to N=1. 5 personal fouls and 2 flagrants only eject from the current match — they do NOT carry over.
 
@@ -253,3 +278,5 @@ After editing rules, deploy separately with `firebase deploy --only firestore:ru
 - `add-tokens.mjs` — Add upload tokens to existing players
 - `load-match-stats.mjs` — Bulk load match statistics with validation mode
 - `seed-emulator.mjs` — Populate the local Firebase Emulator with synthetic data. Connects to `127.0.0.1:8080` (Firestore) and `127.0.0.1:9099` (Auth) directly via `connectFirestoreEmulator`/`connectAuthEmulator`, so no real credentials needed. Run via `npm run seed:emulator` while the emulator is up.
+- `seed-triple-tie.mjs` — Mutates 3 emulator matches to force a 3-way tie at 5pts in standings, used to validate the FIBA mini-table cascade (`miniWon → miniDiff → miniFor`). Run **after** `seed:emulator` via `npm run seed:triple-tie`.
+- `seed-playoff.mjs` — Seed alternativo: 10 equipos + round-robin completo todo `finished` con scores que producen un ranking 1°..10° unívoco. Permite testear el flujo de "Generar Playoffs" en el admin sin tocar producción. Corre via `npm run seed:playoff` (usar `emulators:fresh` antes para limpiar estado previo).

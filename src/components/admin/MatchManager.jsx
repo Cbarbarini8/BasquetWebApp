@@ -6,6 +6,7 @@ import { logAction, logStatsParticipation } from '../../lib/audit';
 import { useToast } from '../../context/ToastContext';
 import StartMatchModal from './StartMatchModal';
 import { closeOpenStintToBatch } from '../../lib/stints';
+import { propagateBracket } from '../../lib/playoffs';
 import { getMatchProximityToNow } from '../../lib/utils';
 import { PHASES, PHASE_LABEL, PHASE_REGULAR } from '../../lib/timeouts';
 import { IconButton, EditIcon, DeleteIcon, PlayIcon, StopIcon, CalendarIcon, ClipboardIcon, UndoIcon } from '../common/Icons';
@@ -577,12 +578,25 @@ function formatMatchDate(d) {
   return date.toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
 }
 
+// Mapeo phase → label visible en headers del agrupamiento de playoff.
+// (En MatchManager preferimos "Cuartos de final" en vez del literal del enum
+//  `play-off`, mas ambiguo.)
+const PHASE_HEADER = {
+  'play-in': 'Play-in',
+  'play-off': 'Cuartos de final',
+  'semifinal': 'Semifinales',
+  'final': 'Final',
+};
+const PHASE_ORDER = ['play-in', 'play-off', 'semifinal', 'final'];
+
 export default function MatchManager({ matches, teamsMap, teams, players, courts, courtsMap, seasonId, canEdit, canScoring, user }) {
   const navigate = useNavigate();
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [startingMatch, setStartingMatch] = useState(null);
   const [walkoverMatch, setWalkoverMatch] = useState(null);
+  // 'regular' | 'playoff' | null (null = aun no se eligio, usa default).
+  const [selectedView, setSelectedView] = useState(null);
 
   const getMatchLabel = (matchId) => {
     const m = matches.find(x => x.id === matchId);
@@ -628,6 +642,17 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     });
     await batch.commit();
     await logAction(user, 'finish', 'matches', matchId, `Finalizo partido: ${getMatchLabel(matchId)}`);
+    // Si este partido pertenece a un bracket, materializa los teamIds de los
+    // matches que dependen de su ganador. Construimos un snapshot local con el
+    // match recien finalizado para que propagateBracket no espere el listener.
+    if (m?.bracketSlot && m?.seasonId) {
+      const updatedMatches = matches.map(x => x.id === matchId ? { ...x, status: 'finished' } : x);
+      try {
+        await propagateBracket(db, m.seasonId, updatedMatches);
+      } catch (err) {
+        console.error('propagateBracket falló tras finishMatch:', err);
+      }
+    }
   };
 
   // Marca un partido como WO (walkover): el equipo que no se presento pierde
@@ -648,6 +673,16 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       finishedAt: serverTimestamp(),
     });
     await logAction(user, 'walkover', 'matches', matchId, `WO: ${noShowName} no se presento (${homeName} ${homeScore}-${awayScore} ${awayName})`);
+    if (m.bracketSlot && m.seasonId) {
+      const updatedMatches = matches.map(x => x.id === matchId
+        ? { ...x, status: 'walkover', homeScore, awayScore, walkoverNoShow: noShowSide }
+        : x);
+      try {
+        await propagateBracket(db, m.seasonId, updatedMatches);
+      } catch (err) {
+        console.error('propagateBracket falló tras markWalkover:', err);
+      }
+    }
     setWalkoverMatch(null);
   };
 
@@ -692,42 +727,96 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     return d.getTime() * 100000 + parseInt(time);
   };
 
-  const groupedByRound = {};
-  matches.forEach(m => {
-    const r = m.round || 1;
-    if (!groupedByRound[r]) groupedByRound[r] = [];
-    groupedByRound[r].push(m);
+  const isRoundDoneStatus = (s) => s === 'finished' || s === 'walkover';
+
+  // Tabs Regular / Playoffs (mismo patron que FixturePage). La tab playoff solo
+  // aparece cuando hay matches con bracketSlot; default = playoff si los
+  // regulares estan todos finished y hay bracket, sino regular.
+  const regularMatchesAll = matches.filter(m => !m.bracketSlot);
+  const playoffMatchesAll = matches.filter(m => m.bracketSlot);
+  const hasPlayoff = playoffMatchesAll.length > 0;
+  const regularComplete = regularMatchesAll.length > 0
+    && regularMatchesAll.every(m => isRoundDoneStatus(m.status));
+  const activeView = selectedView || (hasPlayoff && regularComplete ? 'playoff' : 'regular');
+  const isPlayoffView = activeView === 'playoff';
+
+  // Filtramos la lista visible segun la vista activa y agrupamos por la key
+  // correspondiente: regular por `round`, playoff por `phase`.
+  const visibleMatches = isPlayoffView ? playoffMatchesAll : regularMatchesAll;
+  const groupedByKey = {};
+  visibleMatches.forEach(m => {
+    const key = isPlayoffView ? (m.phase || 'play-off') : (m.round || 1);
+    if (!groupedByKey[key]) groupedByKey[key] = [];
+    groupedByKey[key].push(m);
   });
 
-  const isRoundDoneStatus = (s) => s === 'finished' || s === 'walkover';
-  const roundNumbers = Object.keys(groupedByRound).map(Number).sort((a, b) => b - a);
-  const pendingRoundNumbers = roundNumbers.filter(r => groupedByRound[r].some(m => !isRoundDoneStatus(m.status)));
-  const completedRoundNumbers = roundNumbers.filter(r => groupedByRound[r].every(m => isRoundDoneStatus(m.status)));
+  const allKeys = isPlayoffView
+    ? PHASE_ORDER.filter(p => groupedByKey[p])
+    : Object.keys(groupedByKey).map(Number).sort((a, b) => b - a);
+  const pendingKeys = allKeys.filter(k => groupedByKey[k].some(m => !isRoundDoneStatus(m.status)));
+  const completedKeys = allKeys.filter(k => groupedByKey[k].every(m => isRoundDoneStatus(m.status)));
 
   // Pendientes: orden cronologico ascendente (fecha+hora menor a mayor)
   const now = Date.now();
-  pendingRoundNumbers.forEach(r => {
-    groupedByRound[r].sort((a, b) => getMatchSortValue(a) - getMatchSortValue(b));
+  pendingKeys.forEach(k => {
+    groupedByKey[k].sort((a, b) => getMatchSortValue(a) - getMatchSortValue(b));
   });
-  // Completadas: orden cronologico descendente (fecha+hora mayor a menor)
-  completedRoundNumbers.forEach(r => {
-    groupedByRound[r].sort((a, b) => getMatchSortValue(b) - getMatchSortValue(a));
+  // Completadas: orden cronologico descendente
+  completedKeys.forEach(k => {
+    groupedByKey[k].sort((a, b) => getMatchSortValue(b) - getMatchSortValue(a));
   });
 
-  // Encabezados de fechas pendientes ordenados por la proximidad de su partido mas cercano
-  const getRoundProximity = (round) => {
-    let minDistance = Infinity;
-    groupedByRound[round].forEach(m => {
-      const d = getMatchProximityToNow(m, now);
-      if (d < minDistance) minDistance = d;
-    });
-    return minDistance;
-  };
-  pendingRoundNumbers.sort((a, b) => getRoundProximity(a) - getRoundProximity(b));
+  // Encabezados pendientes ordenados:
+  //   - Regular: por proximidad a hoy (fecha + hora del partido mas cercano)
+  //   - Playoff: por orden de fase fijo (play-in -> cuartos -> semi -> final)
+  if (!isPlayoffView) {
+    const getRoundProximity = (round) => {
+      let minDistance = Infinity;
+      groupedByKey[round].forEach(m => {
+        const d = getMatchProximityToNow(m, now);
+        if (d < minDistance) minDistance = d;
+      });
+      return minDistance;
+    };
+    pendingKeys.sort((a, b) => getRoundProximity(a) - getRoundProximity(b));
+  }
+
+  const groupLabel = (key) => isPlayoffView
+    ? (PHASE_HEADER[key] || key)
+    : `Fecha ${key}`;
 
   return (
     <div>
-      {canEdit && (showForm ? (
+      {/* Tabs Regular / Playoffs */}
+      {hasPlayoff && (
+        <div
+          className="flex gap-1 mb-4 p-1 rounded-lg"
+          style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', width: 'fit-content' }}
+        >
+          {[
+            { id: 'regular', label: 'Fase regular' },
+            { id: 'playoff', label: 'Playoffs' },
+          ].map(tab => {
+            const active = activeView === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setSelectedView(tab.id)}
+                className="px-4 py-1.5 rounded-md text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: active ? 'var(--color-primary)' : 'transparent',
+                  color: active ? '#ffffff' : 'var(--color-text-secondary)',
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Agregar partido manual solo aplica a la vista regular */}
+      {canEdit && !isPlayoffView && (showForm ? (
         <ManualMatchForm
           teams={teams || Object.values(teamsMap)}
           courts={courts || []}
@@ -745,9 +834,9 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
       ))}
 
       <div className="space-y-6">
-        {pendingRoundNumbers.map(round => renderRound(round))}
+        {pendingKeys.map(key => renderGroup(key))}
 
-        {completedRoundNumbers.length > 0 && (
+        {completedKeys.length > 0 && (
           <div>
             <h2
               className="text-xs font-bold uppercase tracking-widest mt-2 mb-4 pb-2"
@@ -756,10 +845,10 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
                 borderBottom: '1px solid var(--color-border)',
               }}
             >
-              Fechas completadas
+              {isPlayoffView ? 'Fases completadas' : 'Fechas completadas'}
             </h2>
             <div className="space-y-6">
-              {completedRoundNumbers.map(round => renderRound(round))}
+              {completedKeys.map(key => renderGroup(key))}
             </div>
           </div>
         )}
@@ -785,14 +874,14 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
     </div>
   );
 
-  function renderRound(round) {
+  function renderGroup(key) {
     return (
-      <div key={round}>
+      <div key={key}>
         <h3 className="text-sm font-bold uppercase tracking-wider mb-2" style={{ color: 'var(--color-primary)' }}>
-          Fecha {round}
+          {groupLabel(key)}
         </h3>
         <div className="space-y-2">
-          {groupedByRound[round].map(match => {
+          {groupedByKey[key].map(match => {
             const home = teamsMap[match.homeTeamId]?.name || 'TBD';
             const away = teamsMap[match.awayTeamId]?.name || 'TBD';
             const court = match.courtId ? courtsMap?.[match.courtId] : null;
@@ -842,21 +931,31 @@ export default function MatchManager({ matches, teamsMap, teams, players, courts
                     )}
                   </div>
                   <div className="flex gap-1 flex-wrap items-center">
-                    {canEdit && match.status === 'scheduled' && (
-                      <>
-                        <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
-                        <IconButton icon={PlayIcon} label="Iniciar" onClick={() => setStartingMatch(match)} color="var(--color-success)" />
-                        <button
-                          type="button"
-                          onClick={() => setWalkoverMatch(match)}
-                          className="text-xs px-2 py-1 rounded font-bold"
-                          style={{ color: 'var(--color-warning)', border: '1px solid var(--color-warning)' }}
-                          title="Marcar partido como walkover (un equipo no se presento)"
-                        >
-                          WO
-                        </button>
-                      </>
-                    )}
+                    {canEdit && match.status === 'scheduled' && (() => {
+                      const teamsReady = !!match.homeTeamId && !!match.awayTeamId;
+                      return (
+                        <>
+                          <IconButton icon={CalendarIcon} label={editingId === match.id ? 'Cerrar' : 'Programar'} onClick={() => setEditingId(editingId === match.id ? null : match.id)} />
+                          <IconButton
+                            icon={PlayIcon}
+                            label={teamsReady ? 'Iniciar' : 'Esperando ronda previa'}
+                            onClick={() => teamsReady && setStartingMatch(match)}
+                            color={teamsReady ? 'var(--color-success)' : 'var(--color-text-muted)'}
+                            disabled={!teamsReady}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => teamsReady && setWalkoverMatch(match)}
+                            disabled={!teamsReady}
+                            className="text-xs px-2 py-1 rounded font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                            style={{ color: 'var(--color-warning)', border: '1px solid var(--color-warning)' }}
+                            title={teamsReady ? 'Marcar partido como walkover (un equipo no se presento)' : 'Esperando que se resuelvan los equipos del bracket'}
+                          >
+                            WO
+                          </button>
+                        </>
+                      );
+                    })()}
                     {match.status === 'live' && (canEdit || canScoring) && (
                       <>
                         <IconButton icon={ClipboardIcon} label="Planilla" onClick={() => navigate(`/admin/match/${match.id}`)} />

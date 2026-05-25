@@ -10,6 +10,7 @@ import PageShell from '../components/layout/PageShell';
 import TeamForm from '../components/admin/TeamForm';
 import PlayerForm from '../components/admin/PlayerForm';
 import FixtureGenerator from '../components/admin/FixtureGenerator';
+import PlayoffGenerator from '../components/admin/PlayoffGenerator';
 import MatchManager from '../components/admin/MatchManager';
 import ScoringToday from '../components/admin/ScoringToday';
 import SeasonForm from '../components/admin/SeasonForm';
@@ -49,7 +50,12 @@ function PlayersTab({ canEdit, user, teams }) {
 function FixtureTab({ canEdit, user, teams, activeSeason }) {
   const { data: matches, loading } = useMatches(activeSeason?.id);
   if (loading) return <LoadingSpinner />;
-  return <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit} user={user} />;
+  return (
+    <div className="space-y-6">
+      <FixtureGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit} user={user} />
+      <PlayoffGenerator teams={teams} matches={matches} activeSeason={activeSeason} canEdit={canEdit} user={user} />
+    </div>
+  );
 }
 
 function MatchesTab({ canEdit, canScoring, user, teams, courts, activeSeason }) {

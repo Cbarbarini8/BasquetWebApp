@@ -5,6 +5,7 @@ import { useSeasons } from '../hooks/useSeasons';
 import { useCourts } from '../hooks/useCourts';
 import PageShell from '../components/layout/PageShell';
 import RoundGroup from '../components/fixture/RoundGroup';
+import PlayoffBracket from '../components/playoffs/PlayoffBracket';
 import SeasonSelector from '../components/common/SeasonSelector';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import EmptyState from '../components/common/EmptyState';
@@ -15,6 +16,8 @@ export default function FixturePage() {
   const activeSeason = useMemo(() => seasons.find(s => s.active), [seasons]);
   const [selectedSeasonId, setSelectedSeasonId] = useState(null);
   const [selectedRound, setSelectedRound] = useState('all');
+  // 'regular' | 'playoff' | null (null = aun no se eligio, usa default).
+  const [selectedView, setSelectedView] = useState(null);
 
   const seasonId = selectedSeasonId || activeSeason?.id;
   const { data: matches, loading: matchesLoading } = useMatches(seasonId);
@@ -33,10 +36,15 @@ export default function FixturePage() {
     return map;
   }, [courts]);
 
+  // Los partidos del playoff se renderizan en su propio bracket; filtramos los
+  // del listado regular para no duplicar.
+  const regularMatches = useMemo(() => matches.filter(m => !m.bracketSlot), [matches]);
+  const playoffMatches = useMemo(() => matches.filter(m => m.bracketSlot), [matches]);
+
   const { liveMatches, pendingRounds, completedRounds, roundNumbers } = useMemo(() => {
-    const live = matches.filter(m => m.status === 'live');
+    const live = regularMatches.filter(m => m.status === 'live');
     const grouped = {};
-    matches.forEach(m => {
+    regularMatches.forEach(m => {
       const r = m.round || 1;
       if (!grouped[r]) grouped[r] = [];
       grouped[r].push(m);
@@ -70,7 +78,7 @@ export default function FixturePage() {
       completedRounds: completed,
       roundNumbers: nums,
     };
-  }, [matches]);
+  }, [regularMatches]);
 
   const filteredPending = useMemo(() => {
     if (selectedRound === 'all') return pendingRounds;
@@ -85,6 +93,15 @@ export default function FixturePage() {
   }, [completedRounds, selectedRound]);
 
   const currentSeason = useMemo(() => seasons.find(s => s.id === seasonId), [seasons, seasonId]);
+
+  const hasPlayoff = playoffMatches.length > 0;
+  const regularComplete = useMemo(() => {
+    if (regularMatches.length === 0) return false;
+    return regularMatches.every(m => m.status === 'finished' || m.status === 'walkover');
+  }, [regularMatches]);
+  // Si el admin no eligio explicitamente, default a playoff cuando ya esta
+  // todo definido (mas relevante), sino fase regular.
+  const activeView = selectedView || (hasPlayoff && regularComplete ? 'playoff' : 'regular');
 
   if (seasonsLoading || matchesLoading || teamsLoading || courtsLoading) return <PageShell><LoadingSpinner /></PageShell>;
 
@@ -107,8 +124,40 @@ export default function FixturePage() {
           selectedId={seasonId || ''}
           onChange={setSelectedSeasonId}
         />
+      </div>
 
-        {roundNumbers.length > 0 && (
+      {/* Tabs Fase Regular / Playoffs — solo si hay playoff cargado */}
+      {hasPlayoff && (
+        <div
+          className="flex gap-1 mb-4 p-1 rounded-lg"
+          style={{ backgroundColor: 'var(--color-bg-card)', border: '1px solid var(--color-border)', width: 'fit-content' }}
+        >
+          {[
+            { id: 'regular', label: 'Fase regular' },
+            { id: 'playoff', label: 'Playoffs' },
+          ].map(tab => {
+            const active = activeView === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setSelectedView(tab.id)}
+                className="px-4 py-1.5 rounded-md text-sm font-medium transition-colors"
+                style={{
+                  backgroundColor: active ? 'var(--color-primary)' : 'transparent',
+                  color: active ? '#ffffff' : 'var(--color-text-secondary)',
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Filtro de fechas: queda debajo de las tabs y solo en vista regular,
+          asi el header no se mueve al cambiar de tab. */}
+      {activeView === 'regular' && roundNumbers.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 mb-4">
           <select
             value={selectedRound}
             onChange={e => setSelectedRound(e.target.value)}
@@ -124,11 +173,17 @@ export default function FixturePage() {
               <option key={r} value={r}>Fecha {r}</option>
             ))}
           </select>
-        )}
-      </div>
+        </div>
+      )}
 
       {matches.length === 0 ? (
         <EmptyState message="No hay partidos cargados todavia" />
+      ) : activeView === 'playoff' ? (
+        <PlayoffBracket
+          matches={playoffMatches}
+          teamsMap={teamsMap}
+          seeds={currentSeason?.playoffSeeds || []}
+        />
       ) : (
         <>
           {liveMatches.length > 0 && (
