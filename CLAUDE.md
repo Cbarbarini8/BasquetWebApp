@@ -151,10 +151,11 @@ A scheduled match can be marked as **walkover** (`MatchManager.markWalkover`) wh
 
 ### Match Roster & Libres (reglamento)
 `src/lib/roster.js` codifies the regulation's roster rules:
+- **Max 15 players per team squad / lista de buena fe** (`MAX_SQUAD_SIZE`). Enforced only as a non-blocking warning in `PlayerForm` — it's a property of the team, not of a match.
 - **Max 12 convocados per team per match** (`MAX_ROSTER_SIZE`). The `match.playerNumbers` object IS the roster — a player is convocado iff they have an entry there. `AdminMatchPage` already filters team players by `playerNumbers` before passing to `LiveScoring`.
 - **Max 3 libres per team per match** (`MAX_LIBRES_PER_MATCH`). Stored in `match.libres.{home|away}` as an array of playerIds. The libres are a subset of the convocados (they must also appear in `playerNumbers`).
 - **Libre eligibility** (`checkLibreEligibility`):
-  - Cannot be `CATEGORY_YOUNG` (20-25).
+  - Cannot be `CATEGORY_YOUNG` (19-24).
   - Cannot have played as libre for **another** team in any prior match (cross-team conflict, derived at runtime via `deriveLibreHistory(matches)` — no denormalized field).
   - In phase `semifinal` or `final`: cannot be a NEW libre — must have been libre for this same team in a prior match.
 
@@ -184,15 +185,20 @@ Helpers: `timeoutsUsedIn(match, q, side)` (tolerates boolean legacy data), `time
 
 ### Player Age Categories (reglamento)
 `src/lib/playerCategory.js` codifies the regulation's age-based quotas:
-- **20-25** (`CATEGORY_YOUNG`): max **3** per team roster, max **2** simultaneously on court.
-- **26-30** (`CATEGORY_MID`): max **6** per team roster, no on-court cap.
-- **31+** (`CATEGORY_SENIOR`): no caps.
+- **19-24** (`CATEGORY_YOUNG`): max **5** per team squad, max **2** simultaneously on court.
+- **25-29** (`CATEGORY_MID`): max **6** per team squad, no on-court cap.
+- **30+** (`CATEGORY_SENIOR`): no caps.
 
-`computeAge(birthDate, refDate)` returns null when birthDate is missing/invalid; `categoryFor` falls back to `CATEGORY_SENIOR` in that case — this is the **migration grace rule**: legacy players without a `birthDate` don't participate in quotas until the admin fills the field.
+**Age is computed by birth year, not by exact birthday** — `seasonAge(birthDate, seasonYear) = seasonYear - birthYear`. The regulation says a player who turns 25 (or 30) *during* the tournament counts in the older bracket for the whole tournament, so a player's category is stable across the season and never flips mid-tournament. `categoryFor(birthDate, seasonYear)` builds on this; `seasonYear` defaults to the current calendar year. Callers that have context pass it explicitly via `seasonYearFrom(source)`, which extracts a 4-digit year from a season doc (`name`, then `createdAt`), an ISO date string like `match.scheduledDate`, a `Date`, or a number. `computeAge(birthDate, refDate)` still returns the exact calendar age but is **display-only** — never use it for quotas.
+
+`seasonAge` returns null when birthDate is missing/invalid and `categoryFor` falls back to `CATEGORY_SENIOR` in that case — this is the **migration grace rule**: legacy players without a `birthDate` don't participate in quotas until the admin fills the field. Players **under 19** fall into `CATEGORY_YOUNG` (the regulation doesn't contemplate them; counting them as senior would exempt them from quotas and make them libre-eligible, the opposite of the rule's intent).
+
+Birth-year parsing avoids `new Date('2001-01-01')` for ISO strings — that parses as UTC and shifts the year in negative-offset timezones. `birthYearOf` reads the year straight off the `yyyy-mm-dd` string.
 
 **Enforcement points:**
-- `PlayerForm`: shows a `toast.warning` (non-blocking) when adding/editing a player would push the team over the 3- or 6-quota for the resulting category. We don't hard-block because corrections (typo fixes, birthdays crossing the 25→26 line) need to go through.
-- `LiveScoring.togglePlayerOnCourt`: hard-blocks bringing in a 4th 20-25 player when 2 are already on court (only for players whose birthDate is loaded).
+- `PlayerForm`: shows a `toast.warning` (non-blocking) when adding/editing a player would push the team over the 5- or 6-quota for the resulting category, and a second one when the team would exceed `MAX_SQUAD_SIZE` (15). We don't hard-block because corrections (typo fixes, temporary entries) need to go through. The age badge in the form and the player list shows the **tournament age**; the tooltip carries the real current age.
+- `LiveScoring.togglePlayerOnCourt`: hard-blocks bringing in a 3rd 19-24 player when 2 are already on court (only for players whose birthDate is loaded). Uses `seasonYearFrom(match.scheduledDate)`.
+- `StartMatchModal`: passes `seasonYearFrom(match.scheduledDate)` into `checkLibreEligibility` so libre checks resolve the category with the match's year.
 
 `PlayerBulkImport.jsx` handles CSV download/upload for filling birthDates in bulk: download exports headers `ID,Equipo,Nombre,Apellido,Numero,FechaNacimiento` (UTF-8 BOM so Excel respects accents); upload accepts `yyyy-mm-dd`, `dd/mm/yyyy`, or `dd-mm-yyyy` and shows a preview with valid changes / parse errors / unmatched IDs before committing in 400-op batches.
 

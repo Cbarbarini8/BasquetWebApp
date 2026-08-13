@@ -10,9 +10,12 @@ import {
   deriveLibreHistory,
   checkLibreEligibility,
 } from '../../lib/roster';
+import { seasonYearFrom } from '../../lib/playerCategory';
 
 export default function StartMatchModal({ match, teamsMap, players, allMatches = [], onCancel, onConfirm }) {
   const { toast } = useToast();
+  // Anio del torneo para resolver categorias por anio de nacimiento.
+  const seasonYear = seasonYearFrom(match.scheduledDate);
   const home = teamsMap[match.homeTeamId];
   const away = teamsMap[match.awayTeamId];
   const homePlayers = players.filter(p => p.teamId === match.homeTeamId).sort((a, b) => a.number - b.number);
@@ -151,7 +154,7 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
     }
     const phase = match.phase || 'regular';
     const playerHistory = libreHistory[id] || [];
-    const elig = checkLibreEligibility(player, teamId, phase, playerHistory, match.id);
+    const elig = checkLibreEligibility(player, teamId, phase, playerHistory, match.id, seasonYear);
     if (!elig.ok) {
       toast.warning(`${player.firstName} ${player.lastName}: ${elig.reason}`, 5000);
       return;
@@ -212,7 +215,7 @@ export default function StartMatchModal({ match, teamsMap, players, allMatches =
       ...homeLibres.map(p => ({ p, teamId: match.homeTeamId, teamName: home?.name || 'Local' })),
       ...awayLibres.map(p => ({ p, teamId: match.awayTeamId, teamName: away?.name || 'Visitante' })),
     ]) {
-      const elig = checkLibreEligibility(p, teamId, phase, libreHistory[p.id] || [], match.id);
+      const elig = checkLibreEligibility(p, teamId, phase, libreHistory[p.id] || [], match.id, seasonYear);
       if (!elig.ok) {
         toast.error(`${teamName}: ${p.firstName} ${p.lastName} no es libre elegible (${elig.reason}).`);
         return;

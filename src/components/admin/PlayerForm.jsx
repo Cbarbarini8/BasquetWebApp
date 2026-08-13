@@ -9,10 +9,12 @@ import { useToast } from '../../context/ToastContext';
 import PlayerBulkImport from './PlayerBulkImport';
 import {
   computeAge,
+  seasonAge,
   categoryFor,
   CATEGORY_LABEL,
   TEAM_QUOTA,
 } from '../../lib/playerCategory';
+import { MAX_SQUAD_SIZE } from '../../lib/roster';
 
 function PlayerPhoto({ url, name, size = 36 }) {
   if (!url) {
@@ -82,6 +84,19 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
     return null;
   };
 
+  // Idem para el tope de plantel / lista de buena fe (15). Tambien no
+  // bloqueante: puede haber altas temporales o correcciones en curso.
+  const checkSquadWarning = (targetTeamId, ignoreId) => {
+    const futureCount = players.filter(p =>
+      p.teamId === targetTeamId && p.id !== ignoreId
+    ).length + 1;
+    if (futureCount > MAX_SQUAD_SIZE) {
+      const team = teams.find(t => t.id === targetTeamId);
+      return `${team?.name || 'Equipo'} tendria ${futureCount} jugadores en el plantel (maximo: ${MAX_SQUAD_SIZE}).`;
+    }
+    return null;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!firstName.trim() || !lastName.trim() || !teamId) return;
@@ -97,6 +112,8 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
         birthDate: cleanBirthDate,
       };
 
+      const squadWarning = checkSquadWarning(teamId, editingId);
+      if (squadWarning) toast.warning(squadWarning, 6000);
       const warning = checkQuotaWarning(teamId, cleanBirthDate, editingId);
       if (warning) toast.warning(warning, 6000);
 
@@ -270,10 +287,17 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
               style={inputStyle}
             />
             {birthDate && (() => {
-              const age = computeAge(birthDate);
+              // La edad que se muestra es la del torneo (anio del torneo -
+              // anio de nacimiento), que es la que define la categoria.
+              const age = seasonAge(birthDate);
+              const realAge = computeAge(birthDate);
               const cat = categoryFor(birthDate);
               return (
-                <span className="text-xs whitespace-nowrap" style={{ color: 'var(--color-text-muted)' }}>
+                <span
+                  className="text-xs whitespace-nowrap"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title={`Edad en el torneo: ${age ?? '?'} (cumple ${age ?? '?'} este anio). Edad actual: ${realAge ?? '?'}.`}
+                >
                   {age != null ? `${age} a.` : ''} · {CATEGORY_LABEL[cat]}
                 </span>
               );
@@ -336,7 +360,8 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
       {/* Player list */}
       <div className="space-y-2">
         {filteredPlayers.map(player => {
-          const age = computeAge(player.birthDate);
+          const age = seasonAge(player.birthDate);
+          const realAge = computeAge(player.birthDate);
           const cat = categoryFor(player.birthDate);
           const ageBadge = player.birthDate
             ? `${age != null ? age + ' a.' : ''} · ${CATEGORY_LABEL[cat]}`
@@ -359,7 +384,9 @@ export default function PlayerForm({ players, teams, canEdit, user }) {
                 <span
                   className="ml-2 text-xs"
                   style={{ color: player.birthDate ? 'var(--color-text-muted)' : 'var(--color-warning)' }}
-                  title={player.birthDate || 'Falta fecha de nacimiento'}
+                  title={player.birthDate
+                    ? `${player.birthDate} — edad en el torneo: ${age ?? '?'} · edad actual: ${realAge ?? '?'}`
+                    : 'Falta fecha de nacimiento'}
                 >
                   {ageBadge}
                 </span>

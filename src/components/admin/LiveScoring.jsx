@@ -6,7 +6,7 @@ import { logStatsParticipation } from '../../lib/audit';
 import { useToast } from '../../context/ToastContext';
 import { useMatchClock, defaultQuarterMs, pausedRemainingFromMatch, formatClock } from '../../hooks/useMatchClock';
 import { closeOpenStintToBatch, buildOpenStint } from '../../lib/stints';
-import { categoryFor, CATEGORY_YOUNG, CATEGORY_LABEL, ON_COURT_QUOTA } from '../../lib/playerCategory';
+import { categoryFor, seasonYearFrom, CATEGORY_YOUNG, CATEGORY_LABEL, ON_COURT_QUOTA } from '../../lib/playerCategory';
 import {
   timeoutsUsedIn,
   timeoutsAllowedFor,
@@ -328,16 +328,18 @@ export default function LiveScoring({ match, events, homePlayers, awayPlayers, h
       toast.warning(`Maximo ${MAX_ON_COURT} jugadores en cancha. Sacar uno primero.`);
       return;
     }
-    // Reglamento: maximo 2 jugadores 20-25 simultaneos en cancha (por equipo).
+    // Reglamento: maximo 2 jugadores 19-24 simultaneos en cancha (por equipo).
     // Solo bloquea cuando el jugador entrante tiene fecha cargada — con la
-    // regla de gracia (sin birthDate => +30) los legacy no participan del cupo.
+    // regla de gracia (sin birthDate => 30+) los legacy no participan del cupo.
+    // La categoria se resuelve con el anio del partido (ver playerCategory.js).
     if (!isOn) {
+      const seasonYear = seasonYearFrom(match.scheduledDate);
       const sidePlayers = side === 'home' ? homePlayers : awayPlayers;
       const incomingPlayer = sidePlayers.find(p => p.id === playerId);
-      if (incomingPlayer && categoryFor(incomingPlayer.birthDate) === CATEGORY_YOUNG) {
+      if (incomingPlayer && categoryFor(incomingPlayer.birthDate, seasonYear) === CATEGORY_YOUNG) {
         const youngOnCourt = currentIds.filter(id => {
           const p = sidePlayers.find(x => x.id === id);
-          return p && categoryFor(p.birthDate) === CATEGORY_YOUNG;
+          return p && categoryFor(p.birthDate, seasonYear) === CATEGORY_YOUNG;
         }).length;
         if (youngOnCourt >= ON_COURT_QUOTA[CATEGORY_YOUNG]) {
           toast.warning(`Maximo ${ON_COURT_QUOTA[CATEGORY_YOUNG]} jugadores ${CATEGORY_LABEL[CATEGORY_YOUNG]} en cancha por equipo. Sacar uno primero.`);

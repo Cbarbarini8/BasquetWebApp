@@ -91,19 +91,20 @@ async function seedTeams() {
   console.log(`[seed] ${TEAMS.length} equipos`);
 }
 
-// 10 jugadores por equipo. Mix:
-//   - 1 categoria 20-25 (edad 22)
-//   - 4 categoria 26-30 (edades 26, 27, 28, 30)
-//   - 4 categoria +30 (edades 32, 35, 38, 42)
-//   - 1 sin birthDate (legacy fallback => +30)
-// Hoy es 2026-05-03; calculamos birthYear = 2026 - edad para que cumpla mas
-// adelante en el anio (mes 8 -> ya cumplio si refDate es de mayo, asi que uso
-// mes 1 para asegurar que ya cumplieron).
+// 10 jugadores por equipo. Mix pensado para ejercitar los bordes de categoria
+// (la edad es por anio de nacimiento: edadTorneo = 2026 - birthYear):
+//   - 2 categoria 19-24 (edades 19, 24)  <- borde superior young
+//   - 4 categoria 25-29 (edades 25, 26, 27, 29)  <- bordes 25 y 29
+//   - 3 categoria 30+ (edades 30, 33, 40)  <- borde inferior senior
+//   - 1 sin birthDate (legacy fallback => 30+)
+// El dia/mes no afecta la categoria (solo el anio), pero se usa 12-20 a
+// proposito: un jugador que cumple recien en diciembre igual cuenta con la
+// edad del anio completo, que es justo lo que dice el reglamento.
 function buildPlayersForTeam(teamIdx) {
-  const ages = [22, 26, 27, 28, 30, 32, 35, 38, 42, null];
+  const ages = [19, 24, 25, 26, 27, 29, 30, 33, 40, null];
   const baseNumber = (teamIdx + 1) * 10;
   return ages.map((age, i) => {
-    const birthDate = age == null ? '' : `${2026 - age}-01-15`;
+    const birthDate = age == null ? '' : `${2026 - age}-12-20`;
     return {
       id: `player-${teamIdx}-${i}`,
       firstName: `Jugador${i + 1}`,

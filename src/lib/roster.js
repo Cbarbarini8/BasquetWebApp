@@ -1,7 +1,8 @@
 // Reglamento Liga Comercial 2026: plantel y jugadores libres.
+// - Maximo 15 jugadores por plantel / lista de buena fe (MAX_SQUAD_SIZE).
 // - Maximo 12 convocados por partido (titulares + suplentes).
 // - Maximo 3 jugadores libres por partido por equipo.
-// - Los libres no pueden ser de la categoria 20-25.
+// - Los libres no pueden ser de la categoria joven (19-24).
 // - Un libre que jugo para un equipo no puede jugar como libre para otro
 //   equipo en el torneo.
 // - En semifinal/final no se pueden incorporar libres NUEVOS — solo los que
@@ -13,8 +14,11 @@
 // scanneando todos los matches (no se denormaliza en el doc del jugador para
 // evitar inconsistencias).
 
-import { categoryFor, CATEGORY_YOUNG } from './playerCategory';
+import { categoryFor, CATEGORY_YOUNG, CATEGORY_LABEL } from './playerCategory';
 
+// Plantel completo del equipo (lista de buena fe), no confundir con el cupo
+// de convocados por partido.
+export const MAX_SQUAD_SIZE = 15;
 export const MAX_ROSTER_SIZE = 12;
 export const MAX_LIBRES_PER_MATCH = 3;
 
@@ -43,10 +47,12 @@ export function deriveLibreHistory(matches) {
 // `playerHistory` es el array de entradas previas del jugador (de
 // deriveLibreHistory). `excludeMatchId` permite ignorar el partido actual al
 // chequear (para que re-elegir libres en un mismo match no se autoinvalide).
-export function checkLibreEligibility(player, teamId, phase, playerHistory = [], excludeMatchId = null) {
+// `seasonYear` es el anio del torneo, para resolver la categoria por anio de
+// nacimiento (ver playerCategory.js).
+export function checkLibreEligibility(player, teamId, phase, playerHistory = [], excludeMatchId = null, seasonYear = undefined) {
   if (!player) return { ok: false, reason: 'jugador no encontrado' };
-  if (categoryFor(player.birthDate) === CATEGORY_YOUNG) {
-    return { ok: false, reason: 'no puede ser libre (categoria 20-25)' };
+  if (categoryFor(player.birthDate, seasonYear) === CATEGORY_YOUNG) {
+    return { ok: false, reason: `no puede ser libre (categoria ${CATEGORY_LABEL[CATEGORY_YOUNG]})` };
   }
   const otherTeams = playerHistory
     .filter(e => e.matchId !== excludeMatchId)
